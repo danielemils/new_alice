@@ -1,0 +1,9 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="icons">
+        <file alias="alicelogo128.png">resources/alicelogo128.png</file>
+        <file alias="alice_bg_plain.png">resources/alice_bg_plain.png</file>
+        <file alias="alice_title.png">resources/alice_title.png</file>
+        <file alias="settings_icon.png">resources/settings_icon.png</file>
+    </qresource>
+</RCC>

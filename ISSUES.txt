@@ -1,0 +1,1 @@
+Not legally allowed to include libmad-0.dll and libmp3lame.dll when distributing because of mp3 patent (according to SoX).

@@ -1,0 +1,3 @@
+change resources.qrc and run next line in terminal
+
+pyrcc5 resources.qrc -o src/resources.py

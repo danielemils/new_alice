@@ -1,0 +1,7 @@
+WORKS BUT INCLUDES AN EXTRA FOLDER
+pyinstaller --noconsole --add-data "sox-14-4-2;sox-14-4-2" src/alice.py
+
+
+ONE FILE - SEEMS TO WORK GREAT
+pyinstaller --noconsole --onefile --add-binary "sox-14-4-2;sox-14-4-2" --icon=alicelogo7.ico --add-data "src/style.qss;." src/alice.py
+

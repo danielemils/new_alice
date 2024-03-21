@@ -1,0 +1,30 @@
+X? fix windows app icon
+X? check out QSettings for saving config/settings in a standard place (not current working directory) (need company name)
+X? dynamic gain (compressor? limiter?) for noise (louder noise when no other audio) !!! compand 0.01,0.5 -35,-20,0,-1 0 -20 0.5 !!!
+X? estimated time remaining
+O save files as 60-minute chunks (easier for audio players and 60-min is recommended daily listening time)
+O consider saving as mono (dno if good idea in case of music, maybe just have a setting)
+
+settings:
+    X audio boost (maybe always active)
+    mono/stereo (dno if want)
+    X add noise
+        - noise type (white, pink, brown) (dno if want)
+    X custom tremolo effect frequency (prob only around 40hz)
+
+    my idea: maybe tremolo depth setting (volume doesnt have to go all the way to 0)
+
+
+!!!!!!!!
+sox cannot handle special characters (like icelandic characters)
+only solution so far is to rename input files.
+can make function that renames all original input files
+or use tempfile to save a temporary renamed version before calling sox
+
+************************
+current solution:
+use tempfile in C:/Temp to skip windows username (might have special chars)
+need to copy input file to tempfile (will have randomly generated name so no issues with sox)
+need to have sox save the output to that temp dir (to bypass windows username again)
+move the temp output file to the chosen destination path and rename it to correct filename
+

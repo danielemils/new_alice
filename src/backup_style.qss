@@ -1,0 +1,120 @@
+QWidget {
+    font-size: 14px;
+    font-weight: bold;
+    /* color: #2c2c2c; */
+    color: white;
+}
+
+#main {
+    /* background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #895be5, stop:1 #6765f8); */
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #6765f8, stop:1 #895be5);
+}
+
+QLabel, QPushButton, QListWidget {
+    margin: 2px;
+}
+
+#alice_text {
+    font-size: 20px;
+    color: #2c2c2c;
+}
+
+#alice_pic {
+    margin: 0;
+}
+
+#selected_destination_folder {
+    font-size: 12px;
+    font-weight: normal;
+}
+
+QPushButton, QListWidget {
+    /* background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3d3d3d, stop:1 #242424); */
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #803d3d3d, stop:1 #80242424);
+    border: none;
+    padding: 15px 15px;
+    text-align: center;
+    text-decoration: none;
+    border-radius: 10px;
+}
+
+QListWidget {
+    font-weight: normal;
+}
+
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #b03d3d3d, stop:1 #b0242424);
+}
+
+QPushButton:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3d3d3d, stop:1 #242424);
+}
+
+QPushButton:disabled {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #503d3d3d, stop:1 #50242424);
+    color: #80ffffff;
+}
+
+
+#minimize_button,
+#exit_button {
+    border: none;
+    color: #2c2c2c;
+    background-color: #00ffffff;
+    padding: 3px;
+    margin:0px;
+    border-radius: 3px;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+#minimize_button:hover {
+    background-color: #80ffffff;
+}
+
+#exit_button:hover {
+    background-color: #b0dd2222;
+    color: #ffffff;
+}
+
+#convert_button {
+    margin-top: 30px;
+}
+
+QScrollBar {
+    background-color: #30000000;
+    border-radius: 4px;
+}
+QScrollBar:vertical {
+    width: 8px;
+    margin: 0 0 10px 0;
+}
+QScrollBar:horizontal {
+    height: 8px;
+    margin: 0 10px 0 0;
+}
+QScrollBar::handle {
+    background: #d8d8d8;
+    border-radius: 4px;
+}
+QScrollBar::handle:hover {
+    background: white;
+}
+QScrollBar::handle:horizontal {
+    min-width: 20px;
+}
+QScrollBar::handle:vertical {
+    min-height: 20px;
+}
+QScrollBar::add-page,
+QScrollBar::sub-page,
+QScrollBar::add-line,
+QScrollBar::sub-line,
+QScrollBar::up-arrow,
+QScrollBar::right-arrow,
+QScrollBar::down-arrow,
+QScrollBar::left-arrow {
+    background: none;
+    background-color: transparent;
+    border: none;
+}
