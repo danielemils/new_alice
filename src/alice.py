@@ -4,11 +4,14 @@ import os
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout,
     QFileDialog, QLabel, QListWidget, QListWidgetItem,
-    QHBoxLayout, QDesktopWidget, QDialog, QProgressBar,
+    QHBoxLayout, QDialog, QProgressBar,
     QGraphicsDropShadowEffect, QGraphicsOpacityEffect,
-    QCheckBox, QDoubleSpinBox
+    QCheckBox, QDoubleSpinBox,
 )
-from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot, QSize, Qt, QSettings, QPoint
+from PyQt5.QtCore import (
+    QObject, QThread, pyqtSignal, pyqtSlot, QSize, Qt,
+    QSettings, QPoint
+)
 from PyQt5.QtGui import QIcon, QPixmap, QColor, QCloseEvent
 import resources # required
 import tempfile
@@ -60,7 +63,7 @@ class AliceSettings():
     MIN_FREQ = 30.0
     MAX_FREQ = 50.0
 
-    def __init__(self, window_position = QPoint(200, 200), input_folder=None, output_folder=None, noise=True, compressor=True, frequency=40.0):
+    def __init__(self, window_position = QPoint(200, 200), input_folder=None, output_folder=None, noise=True, compressor=True, frequency=40.0, save_as_60_min_chunks=False):
         self.window_position = window_position
 
         self.input_folder = input_folder
@@ -69,6 +72,8 @@ class AliceSettings():
         self.noise = noise
         self.compressor = compressor
         self.frequency = max(min(frequency, self.MAX_FREQ), self.MIN_FREQ)
+
+        self.save_as_60_min_chunks = save_as_60_min_chunks
 
     def to_diccy(self):
         return self.__dict__
@@ -325,7 +330,7 @@ class MainWindow(QWidget):
             self.progress_dialog.setLabelText("Conversion completed.")
             # self.progress_dialog.setAutoReset(False)
             self.progress_dialog.setValue(100)
-            self.progress_dialog.setCancelButtonText("Finish")
+            self.progress_dialog.setFinishButton()
     
     @pyqtSlot()
     def cleanup(self):
@@ -398,14 +403,14 @@ class ConversionWorker(QObject):
     total_progress_updated = pyqtSignal(str)
     time_remaining_updated = pyqtSignal(int)
     
-    max_chars = 20
+    MAX_CHARS = 20
+    CHUNK_DURATION = 3600 # 1 hour in seconds
 
     def __init__(self, input_files: str, settings: AliceSettings):
         super().__init__()
         self.input_files = input_files
         self.settings = settings
 
-        self.tmp_copy = None
         self.process = None
 
         self.time_remaining = 0
@@ -415,15 +420,22 @@ class ConversionWorker(QObject):
 
         self.stopped = False  # Flag to indicate if processing should be stopped
 
+        self.files_to_seq_merge = []
+        self.total_dur_seq_merge = 0
+        self.merged_out_path = ""
+
     @pyqtSlot()
     def convertFiles(self):
+        if len(self.input_files) > 0:
+            curr_or_next_file_duration = self.getFileDuration(self.input_files[0])
+
         for index, input_file in enumerate(self.input_files):
             if self.stopped:
                 return
             
             filename, extension = getFilenameAndExtensionTuple(input_file)
             
-            self.total_progress_updated.emit(f"{filename[:self.max_chars]}{'...' if len(filename) > self.max_chars else ''} ({index}/{len(self.input_files)})")
+            self.total_progress_updated.emit(f"{filename[:self.MAX_CHARS]}{'...' if len(filename) > self.MAX_CHARS else ''} ({index}/{len(self.input_files)})")
 
             in_tmp_file_path = None
             out_tmp_file_path = None
@@ -437,19 +449,51 @@ class ConversionWorker(QObject):
                 self.copyFile(input_file, in_tmp_file_path) # copy input file to temp file
                 # output file:
                 output_file = self.generateDestinationPath(filename)
+
+                if self.settings.save_as_60_min_chunks and len(self.files_to_seq_merge) == 0:
+                    self.merged_out_path = output_file
+
                 out_tmp_file_path = self.getTempFile(extension) # create temp file
 
-                self.estimateTotalTime(in_tmp_file_path, len(self.input_files) - index)
+                self.estimateTotalTime(curr_or_next_file_duration, len(self.input_files) - index)
 
                 self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension)
 
-                self.copyFile(out_tmp_file_path, output_file) # copy temp output file to destination file
+                if not self.settings.save_as_60_min_chunks:
+                    self.copyFile(out_tmp_file_path, output_file) # copy temp output file to destination file
+                else:
+                    self.files_to_seq_merge.append(out_tmp_file_path)
+                    self.total_dur_seq_merge += curr_or_next_file_duration
+
+                # not last file
+                if index + 1 < len(self.input_files):
+                    curr_or_next_file_duration = self.getFileDuration(self.input_files[index + 1])
+
+                    if self.settings.save_as_60_min_chunks:
+                        curr_chunk_diff = abs(self.total_dur_seq_merge - self.CHUNK_DURATION)
+                        next_chunk_diff = abs(self.total_dur_seq_merge + curr_or_next_file_duration - self.CHUNK_DURATION)
+                        # if already past 60 min chunk
+                        # or if closer to 60 min than we would be by including next file
+                        if self.total_dur_seq_merge >= self.CHUNK_DURATION or curr_chunk_diff <= next_chunk_diff:
+                            self.mergeFiles(extension)
+                else:
+                    if self.settings.save_as_60_min_chunks:
+                        if len(self.files_to_seq_merge) == 1: # no need to call merge cus just 1 file
+                            self.copyFile(out_tmp_file_path, output_file) # copy temp output file to destination file
+                        else:
+                            self.mergeFiles(extension)
+
+
             except Exception as e:
                 print(f"Exception in convertFiles, deleting temp files: {type(e)} ({e})")
 
             self.delTempFile(in_tmp_file_path) # IMPORTANT
-            self.delTempFile(out_tmp_file_path) # IMPORTANT
+            if not self.settings.save_as_60_min_chunks:
+                self.delTempFile(out_tmp_file_path) # IMPORTANT
         
+        if len(self.files_to_seq_merge) > 0:
+            self.delTempChunkFiles()
+            
         self.finished.emit()
 
     def copyFile(self, src, dst):
@@ -468,7 +512,6 @@ class ConversionWorker(QObject):
         try:
             # Create a temporary file
             temp_file_fd, temp_file_path = tempfile.mkstemp(suffix=extension)
-            self.tmp_copy = temp_file_path
             # Close the file descriptor as we won't be using it
             os.close(temp_file_fd)
             return temp_file_path
@@ -483,40 +526,59 @@ class ConversionWorker(QObject):
                 os.remove(tmp_file)
             except Exception as e:
                 print(f"Failed to delete temp file: {type(e)} ({e})")
+    
+    def delTempChunkFiles(self):
+        for tmp_file in self.files_to_seq_merge:
+            self.delTempFile(tmp_file)
+        self.files_to_seq_merge = []
+        self.total_dur_seq_merge = 0
+        self.merged_out_path = ""
+
 
     # inefficient to make a copy of every file at the start just to estimate time
     # so just guessing based on one file
-    def estimateTotalTime(self, curr_file, num_files_remaining):
-        # to adjust to slower/faster computers
-        if self.time_started_last_file is not None and self.est_time_for_last_file is not None:
-            self.dynamic_multi *= (time.time() - self.time_started_last_file) / self.est_time_for_last_file
-            print(self.est_time_for_last_file)
-            print(time.time() - self.time_started_last_file)
-            print(self.dynamic_multi)
-        self.time_started_last_file = time.time()
-        # 11 min mp3 file stats:
-        # tremolo only      ->  11.5 sec
-        # with noise        ->  +4.5 sec
-        # with compressor   ->  +2.5 sec
-
-        # maybe file type multi too, mp3 prob slowest
-        tremolo_multi = 0.0174
-        noise_multi = 0.0068 * self.settings.noise # True or False so multiplying by 1 or 0
-        compressor_multi = 0.0038 * self.settings.compressor
-
-        multi = (tremolo_multi + noise_multi + compressor_multi) * self.dynamic_multi
-
-        command = ['sox-14-4-2/sox', '--i', '-D', curr_file]
+    def getFileDuration(self, file):
+        command = ['sox-14-4-2/sox', '--i', '-D', file]
         try:
             result = subprocess.run(command, stdout=subprocess.PIPE, check=True)
-            output = result.stdout.decode('utf-8')
-
-            self.est_time_for_last_file = float(output) * multi
-            time_est = math.ceil(self.est_time_for_last_file * num_files_remaining)
-            self.time_remaining = time_est
-            self.time_remaining_updated.emit(time_est)
+            return float(result.stdout.decode('utf-8'))
         except subprocess.CalledProcessError as e:
             print("Error:", e)
+        except Exception as e:
+            print(f"Failed getFileDuration: {type(e)} ({e})")
+
+    @pyqtSlot()
+    def estimateTotalTime(self, curr_file_duration, num_files_remaining):
+        try:
+            # to adjust to slower/faster computers
+            if self.time_started_last_file is not None and self.est_time_for_last_file is not None:
+                self.dynamic_multi *= (time.time() - self.time_started_last_file) / self.est_time_for_last_file
+                # print(f"Estimated time was: {self.est_time_for_last_file}")
+                # print(f"Actual time was: {time.time() - self.time_started_last_file}")
+                # print(f"Dynamic time multiplier set to: {self.dynamic_multi}")
+            self.time_started_last_file = time.time()
+            # 11 min mp3 file stats:
+            # tremolo only      ->  11.5 sec
+            # with noise        ->  +4.5 sec
+            # with compressor   ->  +2.5 sec
+            # with merge        ->  +7.4 sec
+
+            # maybe file type multi too, mp3 prob slowest
+            tremolo_multi = 0.0174
+            noise_multi = 0.0068 * self.settings.noise # True or False so multiplying by 1 or 0
+            compressor_multi = 0.0038 * self.settings.compressor
+            # merge happens once every x files so cant use it with dynamic multi calcs
+            merge_multi = 0.0112 * self.settings.save_as_60_min_chunks
+
+            multi = (tremolo_multi + noise_multi + compressor_multi) * self.dynamic_multi
+
+            self.est_time_for_last_file = curr_file_duration * multi
+
+            merge_time = merge_multi * self.dynamic_multi * curr_file_duration
+
+            time_est = math.ceil((self.est_time_for_last_file + merge_time) * num_files_remaining)
+            self.time_remaining = time_est
+            self.time_remaining_updated.emit(time_est)
         except Exception as e:
             print(f"Failed estimateTotalTime: {type(e)} ({e})")
 
@@ -525,6 +587,40 @@ class ConversionWorker(QObject):
         if math.ceil(new_time_remaining) != math.ceil(self.time_remaining): # no more than 1 update per sec
             self.time_remaining_updated.emit(math.floor(new_time_remaining))
         self.time_remaining = new_time_remaining
+
+    @pyqtSlot()
+    def mergeFiles(self, extension):
+        if len(self.files_to_seq_merge) > 0:
+            self.total_progress_updated.emit("Merging files...")
+            try:
+                # So subprocess doesn't open a CMD window
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+
+                merged_fd, merged_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
+                os.close(merged_fd) # Close the file descriptor as we won't be using it
+
+                merge_command = ['sox-14-4-2/sox']
+                for file_to_merge in self.files_to_seq_merge:
+                    merge_command.append(file_to_merge)
+                merge_command.append(merged_path)
+
+                self.process = subprocess.Popen(merge_command, startupinfo=startupinfo)
+                while not self.stopped and self.process.poll() is None:  # Check if the process is still running
+                    time.sleep(0.1)
+                    self.updateTimeRemaining(0.1)
+                # check if user wants to cancel before proceeding further
+                if self.stopped:
+                    return
+                
+                self.copyFile(merged_path, self.merged_out_path) # copy temp output file to destination file
+
+            except subprocess.CalledProcessError as e:
+                print(f"Error encountered: {e}")
+            finally:
+                self.delTempFile(merged_path)
+
+        self.delTempChunkFiles()
 
     @pyqtSlot()
     def applyTremolo(self, in_file, out_file, extension):
@@ -556,6 +652,7 @@ class ConversionWorker(QObject):
             if self.settings.noise:
                 sox_command.append(noise_path)
             sox_command.extend([
+                '-c', '2',
                 out_file,
                 'rate', '-v', '44100',
                 'tremolo', str(self.settings.frequency), '100',
@@ -583,16 +680,12 @@ class ConversionWorker(QObject):
                 time_elapsed = time.time() - start_time
                 self.updateTimeRemaining(time_elapsed)
 
-            self.curr_file_progress_updated.emit(100)
+            self.curr_file_progress_updated.emit(99)
 
         except subprocess.CalledProcessError as e:
             print(f"Error encountered: {e}")
         finally:
-            if noise_path is not None and noise_path != "":
-                try:
-                    os.remove(noise_path)
-                except Exception as e:
-                    print(f"Failed to delete temp noise file: {type(e)} ({e})")
+            self.delTempFile(noise_path)
 
     def stopConverting(self):
         self.stopped = True  # Set the flag to stop processing
@@ -667,7 +760,6 @@ class CustomProgressDialog(QDialog):
         self.title_label.setAlignment(Qt.AlignCenter)
 
         self.label = QLabel("")
-        self.label.setObjectName("selected_destination_folder") # reusing style
         self.label.setAlignment(Qt.AlignCenter)
 
         self.progress_bar = QProgressBar()
@@ -675,7 +767,7 @@ class CustomProgressDialog(QDialog):
         self.progress_bar.setRange(0, 100)
 
         self.time_label = QLabel("")
-        self.time_label.setObjectName("selected_destination_folder") # reusing style
+        self.time_label.setObjectName("not_bold") # reusing style
         self.time_label.setAlignment(Qt.AlignCenter)
         
         self.cancel_button = QPushButton("Cancel")
@@ -710,8 +802,11 @@ class CustomProgressDialog(QDialog):
     def setTimeRemaining(self, text):
         self.time_label.setText(text)
 
-    def setCancelButtonText(self, text):
-        self.cancel_button.setText(text)
+    def setFinishButton(self):
+        self.cancel_button.setText("Finish")
+        self.cancel_button.setObjectName("main_button")
+        self.cancel_button.style().unpolish(self.cancel_button)
+        self.cancel_button.style().polish(self.cancel_button)
 
 
 class CustomSettingsDialog(QDialog):
@@ -791,6 +886,11 @@ class CustomSettingsDialog(QDialog):
         frequency_label.setObjectName("frequency_label")
         frequency_label.setToolTip(frequency_tooltip)
 
+        self.save_as_60_min_checkbox = QCheckBox("Merge into ~1-hour files")
+        self.save_as_60_min_checkbox.setFixedHeight(self.ITEM_HEIGHT)
+        self.save_as_60_min_checkbox.setToolTip("Tries to merge input files into 1 hour long output files.")
+        self.save_as_60_min_checkbox.stateChanged.connect(self.saveAs60MinCheckboxChanged)
+
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.clicked.connect(self.cancel)
 
@@ -822,6 +922,7 @@ class CustomSettingsDialog(QDialog):
         frequency_layout.addWidget(frequency_label)
         frequency_input_wrapper.setLayout(frequency_layout)
         checkbox_layout.addWidget(frequency_input_wrapper)
+        checkbox_layout.addWidget(self.save_as_60_min_checkbox)
         checkbox_layout.addStretch(1)
         layout.addLayout(checkbox_layout)
 
@@ -837,6 +938,7 @@ class CustomSettingsDialog(QDialog):
         self.noise_checkbox.setCheckState(self.chosen_settings.noise * 2)
         self.compressor_checkbox.setCheckState(self.chosen_settings.compressor * 2)
         self.frequency_input.setValue(self.chosen_settings.frequency)
+        self.save_as_60_min_checkbox.setCheckState(self.chosen_settings.save_as_60_min_chunks * 2)
 
     @pyqtSlot()
     def save(self):
@@ -852,6 +954,7 @@ class CustomSettingsDialog(QDialog):
         self.chosen_settings.noise = default_settings.noise
         self.chosen_settings.compressor = default_settings.compressor
         self.chosen_settings.frequency = default_settings.frequency
+        self.chosen_settings.save_as_60_min_chunks = default_settings.save_as_60_min_chunks
         self.fromConfig()
 
     def noiseCheckboxChanged(self, state):
@@ -862,6 +965,9 @@ class CustomSettingsDialog(QDialog):
 
     def frequencyValueChanged(self, value):
         self.chosen_settings.frequency = value
+
+    def saveAs60MinCheckboxChanged(self, state):
+        self.chosen_settings.save_as_60_min_chunks = state == 2 # 0, 1, 2 => unchecked, intermediate, checked
 
 
 if __name__ == '__main__':

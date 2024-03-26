@@ -71,6 +71,10 @@ QLabel, QPushButton, QListWidget, QProgressBar, QCheckBox {
     border-top-right-radius: 0;
 }
 
+#not_bold {
+    font-weight: normal;
+}
+
 QPushButton, QListWidget {
     border: none;
     padding: 15px 15px;
@@ -97,7 +101,7 @@ QPushButton:disabled {
     color: #a0a0a0;
 }
 
-#main_button {
+#main_button, QProgressBar::chunk {
     /* background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e2e2e2, stop:1 #b6b6b6); */
     /* color: #2c2c2c; */
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #45b8e9, stop:1 #2598c9);
@@ -168,7 +172,7 @@ QProgressBar {
     margin: 0 20px 0 20px;
 }
 QProgressBar::chunk {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #800fc4f9, stop:1 #0fc4f9);
+    /* background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #800fc4f9, stop:1 #0fc4f9); */
     /* background: #0fc4f9; */
     border: none;
 }
