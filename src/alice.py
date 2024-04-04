@@ -406,6 +406,8 @@ class ConversionWorker(QObject):
     MAX_CHARS = 20
     CHUNK_DURATION = 3600 # 1 hour in seconds
 
+    OUTPUT_EXTENSION = ".mp3"
+
     def __init__(self, input_files: str, settings: AliceSettings):
         super().__init__()
         self.input_files = input_files
@@ -424,6 +426,8 @@ class ConversionWorker(QObject):
         self.total_dur_seq_merge = 0
         self.merged_out_path = ""
 
+        self.split_files = []
+
     @pyqtSlot()
     def convertFiles(self):
         if len(self.input_files) > 0:
@@ -432,7 +436,7 @@ class ConversionWorker(QObject):
         for index, input_file in enumerate(self.input_files):
             if self.stopped:
                 return
-            
+
             filename, extension = getFilenameAndExtensionTuple(input_file)
             
             self.total_progress_updated.emit(f"{filename[:self.MAX_CHARS]}{'...' if len(filename) > self.MAX_CHARS else ''} ({index}/{len(self.input_files)})")
@@ -447,23 +451,60 @@ class ConversionWorker(QObject):
                 in_tmp_file_path = self.getTempFile(extension) # create temp file
                 # remember to call self.delTempFile(tmp_file) when done using it
                 self.copyFile(input_file, in_tmp_file_path) # copy input file to temp file
-                # output file:
-                output_file = self.generateDestinationPath(filename)
 
                 if self.settings.save_as_60_min_chunks and len(self.files_to_seq_merge) == 0:
-                    self.merged_out_path = output_file
+                    # final output path for merged files
+                    self.merged_out_path = self.generateDestinationPath(f"{filename}(Merged)")
 
-                out_tmp_file_path = self.getTempFile(extension) # create temp file
+                # final output path for non-merged files
+                output_file = self.generateDestinationPath(filename)
+
+                out_tmp_file_path = self.getTempFile(self.OUTPUT_EXTENSION) # create temp file
 
                 self.estimateTotalTime(curr_or_next_file_duration, len(self.input_files) - index)
 
-                self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension)
+                if self.settings.save_as_60_min_chunks:
+                    # if longer than 60 min: split into 60 min chunks then append remainder to to-merge list
+                    if curr_or_next_file_duration > self.CHUNK_DURATION:
+                        self.did_split = True
+                        self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension, split=True)
 
-                if not self.settings.save_as_60_min_chunks:
-                    self.copyFile(out_tmp_file_path, output_file) # copy temp output file to destination file
+                        # split file gets saved with diff name than original so this is empty file
+                        self.delTempFile(out_tmp_file_path)
+
+                        tmp_parent_dir = os.path.dirname(out_tmp_file_path)
+                        tmp_filename = os.path.splitext(os.path.basename(out_tmp_file_path))
+                        self.split_files = []
+                        for file_in_tmp_dir in os.listdir(tmp_parent_dir):
+                            file_in_tmp_dir_path = os.path.join(tmp_parent_dir, file_in_tmp_dir)
+                            if os.path.isfile(file_in_tmp_dir_path):
+                                if file_in_tmp_dir.startswith(tmp_filename):
+                                    self.split_files.append(file_in_tmp_dir_path)
+
+                        self.split_files.sort()
+
+                        output_file_path_without_extension, output_file_extension = os.path.splitext(output_file)
+                        for sf_idx, split_file in enumerate(self.split_files):
+                            split_file_without_extension, _ = os.path.splitext(split_file)
+                            split_file_number = split_file_without_extension[-3:]
+                            split_file_output_path = f"{output_file_path_without_extension}{split_file_number}{output_file_extension}"
+                            if sf_idx < len(self.split_files) - 1: # not last split file
+                                self.copyFile(split_file, split_file_output_path)
+                            else: # last split file
+                                # the last split file after splitting will prob be shorter than 60 min
+                                # so we include it in the merge array for next input files (it gets saved below if this is the last input file)
+                                last_split_file = self.split_files.pop()
+                                self.files_to_seq_merge.append(last_split_file)
+                                self.total_dur_seq_merge += self.getFileDuration(last_split_file)
+                                self.merged_out_path = f"{output_file_path_without_extension}{split_file_number}(Merged){output_file_extension}"
+                                output_file = split_file_output_path
+                    else:
+                        self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension)
+                        self.files_to_seq_merge.append(out_tmp_file_path)
+                        self.total_dur_seq_merge += curr_or_next_file_duration
                 else:
-                    self.files_to_seq_merge.append(out_tmp_file_path)
-                    self.total_dur_seq_merge += curr_or_next_file_duration
+                    self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension)
+                    self.copyFile(out_tmp_file_path, output_file) # copy temp output file to destination file
 
                 # not last file
                 if index + 1 < len(self.input_files):
@@ -475,13 +516,18 @@ class ConversionWorker(QObject):
                         # if already past 60 min chunk
                         # or if closer to 60 min than we would be by including next file
                         if self.total_dur_seq_merge >= self.CHUNK_DURATION or curr_chunk_diff <= next_chunk_diff:
-                            self.mergeFiles(extension)
-                else:
+                            if len(self.files_to_seq_merge) == 1: # no need to call merge cus just 1 file
+                                self.copyFile(self.files_to_seq_merge[0], output_file) # copy temp output file to destination file
+                                self.delTempChunkFiles()
+                            else:
+                                self.mergeFiles()
+                else: # if last file
                     if self.settings.save_as_60_min_chunks:
                         if len(self.files_to_seq_merge) == 1: # no need to call merge cus just 1 file
-                            self.copyFile(out_tmp_file_path, output_file) # copy temp output file to destination file
+                            self.copyFile(self.files_to_seq_merge[0], output_file) # copy temp output file to destination file
+                            self.delTempChunkFiles()
                         else:
-                            self.mergeFiles(extension)
+                            self.mergeFiles()
 
 
             except Exception as e:
@@ -490,6 +536,9 @@ class ConversionWorker(QObject):
             self.delTempFile(in_tmp_file_path) # IMPORTANT
             if not self.settings.save_as_60_min_chunks:
                 self.delTempFile(out_tmp_file_path) # IMPORTANT
+            
+            if len(self.split_files) > 0:
+                self.delTempSplitFiles()
         
         if len(self.files_to_seq_merge) > 0:
             self.delTempChunkFiles()
@@ -533,6 +582,11 @@ class ConversionWorker(QObject):
         self.files_to_seq_merge = []
         self.total_dur_seq_merge = 0
         self.merged_out_path = ""
+    
+    def delTempSplitFiles(self):
+        for tmp_file in self.split_files:
+            self.delTempFile(tmp_file)
+        self.split_files = []
 
 
     # inefficient to make a copy of every file at the start just to estimate time
@@ -589,7 +643,7 @@ class ConversionWorker(QObject):
         self.time_remaining = new_time_remaining
 
     @pyqtSlot()
-    def mergeFiles(self, extension):
+    def mergeFiles(self):
         if len(self.files_to_seq_merge) > 0:
             self.total_progress_updated.emit("Merging files...")
             try:
@@ -597,7 +651,7 @@ class ConversionWorker(QObject):
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-                merged_fd, merged_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
+                merged_fd, merged_path = tempfile.mkstemp(suffix=self.OUTPUT_EXTENSION) # Create a temporary file to store the output
                 os.close(merged_fd) # Close the file descriptor as we won't be using it
 
                 merge_command = ['sox-14-4-2/sox']
@@ -623,7 +677,7 @@ class ConversionWorker(QObject):
         self.delTempChunkFiles()
 
     @pyqtSlot()
-    def applyTremolo(self, in_file, out_file, extension):
+    def applyTremolo(self, in_file, out_file, extension, split=False):
         noise_path = None
 
         try:
@@ -653,7 +707,11 @@ class ConversionWorker(QObject):
                 sox_command.append(noise_path)
             sox_command.extend([
                 '-c', '2',
-                out_file,
+                out_file
+            ])
+            if split: # SPLIT
+                sox_command.extend(['trim', '0', f"{self.CHUNK_DURATION}"])
+            sox_command.extend([
                 'rate', '-v', '44100',
                 'tremolo', str(self.settings.frequency), '100',
             ])
@@ -663,6 +721,8 @@ class ConversionWorker(QObject):
                     sox_command.extend(['0.01,0.5', '-35,-20,0,-1', '0', '-20', '0.5'])
                 else:
                     sox_command.extend(['0.05,1', '-40,-50,-20,-10,0,-10', '0', '-60', '0.5'])
+            if split: # SPLIT
+                sox_command.extend([':', 'newfile', ':', 'restart'])
 
             
             self.curr_file_progress_updated.emit(0)
