@@ -515,7 +515,11 @@ class ConversionWorker(QObject):
                         next_chunk_diff = abs(self.total_dur_seq_merge + curr_or_next_file_duration - self.CHUNK_DURATION)
                         # if already past 60 min chunk
                         # or if closer to 60 min than we would be by including next file
-                        if self.total_dur_seq_merge >= self.CHUNK_DURATION or curr_chunk_diff <= next_chunk_diff:
+                        # or next file will be split
+                        if (self.total_dur_seq_merge >= self.CHUNK_DURATION
+                        or curr_chunk_diff <= next_chunk_diff
+                        or curr_or_next_file_duration > self.CHUNK_DURATION):
+                            # save/merge what we have now
                             if len(self.files_to_seq_merge) == 1: # no need to call merge cus just 1 file
                                 self.copyFile(self.files_to_seq_merge[0], output_file) # copy temp output file to destination file
                                 self.delTempChunkFiles()
