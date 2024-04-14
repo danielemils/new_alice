@@ -13,13 +13,18 @@ QWidget {
 }
 
 #border, #progress_dialog {
-    border: 2px solid #b3828282;
+    border: 2px solid #929292;
 }
 
 #main_frame {
     border: none;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #303030, stop:1 #1c1c1c);
+    border-image: url(:icons/alice_bg_plain.png);
     margin: 1px;
+}
+
+#progress_dialog {
+    border-width: 1px;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #80404040, stop:1 #c02c2c2c);
 }
 
 QLabel, QPushButton, QListWidget, QProgressBar, QCheckBox {
@@ -79,45 +84,45 @@ QPushButton, QListWidget {
 }
 
 QListWidget, #selected_destination_folder {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #80505050, stop:1 #c03c3c3c);
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #80404040, stop:1 #c02c2c2c);
     font-weight: normal;
 }
 QPushButton {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #505050, stop:1 #3c3c3c);
-}
-QPushButton:hover {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #606060, stop:1 #4c4c4c);
-}
-QPushButton:pressed {
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #404040, stop:1 #2c2c2c);
 }
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #505050, stop:1 #3c3c3c);
+}
+QPushButton:pressed {
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #303030, stop:1 #1c1c1c);
+}
 QPushButton:disabled {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #b0505050, stop:1 #b03c3c3c);
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #b0404040, stop:1 #b02c2c2c);
     color: #a0a0a0;
 }
 
 #main_button, QProgressBar::chunk {
     /* background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #e2e2e2, stop:1 #b6b6b6); */
-    /* color: #3c3c3c; */
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #8445e9, stop:1 #5325c9);
+    /* color: #2c2c2c; */
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #45b8e9, stop:1 #2598c9);
     color: white;
 }
 #main_button:hover {
     /* background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f2f2f2, stop:1 #c6c6c6);
-    color: #3c3c3c; */
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #8655f9, stop:1 #6135d9);
+    color: #2c2c2c; */
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #55c8f9, stop:1 #35a8d9);
     color: white;
 }
 #main_button:pressed {
     /* background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #d2d2d2, stop:1 #a6a6a6);
-    color: #3c3c3c; */
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #6135d9, stop:1 #4615b9);
+    color: #2c2c2c; */
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #35a8d9, stop:1 #1588b9);
     color: white;
 }
 #main_button:disabled {
     /* background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #b0e2e2e2, stop:1 #b0b6b6b6);
     color: #606060; */
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #b08445e9, stop:1 #b05325c9);
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #b045b8e9, stop:1 #b02598c9);
     color: #b0b0b0;
 }
 
@@ -183,41 +188,39 @@ QProgressBar::chunk {
 /* Unchecked state */
 QCheckBox, #frequency_wrapper {
     spacing: 12px;
-    border-radius: 15px;
-    /* background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #80505050, stop:1 #00505050); */
-    background: none;
+    border-radius: 12px;
+    /* background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #80404040, stop:1 #00404040); */
     padding: 0 0 2px 6px;
     margin: 0px;
-    font-weight: normal;
 }
 QCheckBox::indicator {
     image: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 10px;
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
     border: none;
-    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0.7 #505050, stop:0.8 transparent);
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 #404040, stop:1 #2c2c2c);
     margin-top: 2px;
 }
 QCheckBox::indicator:hover {
-    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0.7 #606060, stop:0.8 transparent);
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 #505050, stop:1 #3c3c3c);
 }
 QCheckBox::indicator:pressed {
-    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0.7 #404040, stop:0.8 transparent);
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0 #303030, stop:1 #1c1c1c);
 }
 QCheckBox::indicator:checked {
-    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0.7 #8445e9, stop:0.8 transparent);
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0.5 #0fc4f9, stop:0.6 #2c2c2c);
 }
 QCheckBox::indicator:checked:hover {
-    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0.7 #9455f9, stop:0.8 transparent);
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0.5 #5cd9ff, stop:0.6 #2c2c2c);
 }
 QCheckBox::indicator:checked:pressed {
-    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0.7 #7435d9, stop:0.8 transparent);
+    background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5, stop:0.5 #0fb4e9, stop:0.6 #1c1c1c);
 }
 
 QDoubleSpinBox {
-    /* background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #80505050, stop:1 #c03c3c3c); */
-    background: #00505050;
+    /* background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #80404040, stop:1 #c02c2c2c); */
+    background: #00404040;
     color: white;
     font-weight: normal;
     border: none;
@@ -227,7 +230,7 @@ QDoubleSpinBox {
     margin-left: 4px;
 }
 QDoubleSpinBox:hover {
-    color: #8445e9;
+    color: #0fc4f9;
 }
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {
     width: 14px;
@@ -241,8 +244,6 @@ QDoubleSpinBox::up-button:pressed, QDoubleSpinBox::down-button:pressed {
     border: none;
 }
 #frequency_label {
-    margin: 0px;
-    margin-bottom: 2px;
-    padding: 0px;
-    font-weight: normal;
+    margin-left: 0px;
+    padding-left: 0px;
 }

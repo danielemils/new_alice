@@ -1,3 +1,6 @@
+INSTEAD OF CREATING TEMP FILES FOR SOX ISSUE, MAYBE JUST TEMPORARILY RENAME INPUT FILES??
+
+
 X? fix windows app icon
 X? check out QSettings for saving config/settings in a standard place (not current working directory) (need company name)
 X? dynamic gain (compressor? limiter?) for noise (louder noise when no other audio) !!! compand 0.01,0.5 -35,-20,0,-1 0 -20 0.5 !!!

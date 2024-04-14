@@ -20,10 +20,9 @@ import platform
 import shutil
 import math
 import datetime
+from alice_settings import AliceSettings
+from conversion import ConversionWorker
 
-ORG_NAME = "Alice Converter"
-APP_NAME = "Alice"
-QSETTINGS_KEY = "settings"
 # CONFIG_FILE = "alice_config.json"
 # cfg_input_folder_key = "input_folder"
 # cfg_output_folder_key = "output_folder"
@@ -43,46 +42,7 @@ else:
     tempfile.tempdir = dir
 os.makedirs(dir, exist_ok=True)
 # ------------
-
-def getFilenameAndExtensionTuple(file_path):
-    return os.path.splitext(os.path.basename(file_path))
-
-def loadConfig():
-    try:
-        qsett = QSettings(ORG_NAME, APP_NAME)
-        return qsett.value(QSETTINGS_KEY, None)
-
-        # with open(CONFIG_FILE, "r") as f:
-        #     data = json.load(f)
-        #     return data
-    except Exception:
-        return None
     
-
-class AliceSettings():
-    MIN_FREQ = 30.0
-    MAX_FREQ = 50.0
-
-    def __init__(self, window_position = QPoint(200, 200), input_folder=None, output_folder=None, noise=True, compressor=True, frequency=40.0, save_as_60_min_chunks=False):
-        self.window_position = window_position
-
-        self.input_folder = input_folder
-        self.output_folder = output_folder
-
-        self.noise = noise
-        self.compressor = compressor
-        self.frequency = max(min(frequency, self.MAX_FREQ), self.MIN_FREQ)
-
-        self.save_as_60_min_chunks = save_as_60_min_chunks
-
-    def to_diccy(self):
-        return self.__dict__
-    
-    @classmethod
-    def from_diccy(cls, diccy=None):
-        if diccy is None:
-            return cls()
-        return cls(**diccy)
 
 class MainWindow(QWidget):
     def __init__(self):
@@ -90,7 +50,7 @@ class MainWindow(QWidget):
         self.worker_thread = None
         self.progress_dialog = None
 
-        self.settings = AliceSettings.from_diccy(loadConfig())
+        self.settings = AliceSettings.load()
 
         self.selected_files = []
 
@@ -100,36 +60,9 @@ class MainWindow(QWidget):
 
     def closeEvent(self, event: QCloseEvent):
         self.settings.window_position = self.pos()
-        self.saveConfig()
+        self.settings.save()
         event.accept()
 
-    def saveConfig(self):
-        try:
-            # data = {}
-
-            # curr_input_folder = self.saved_input_folder
-            # if len(self.selected_files) > 0:
-            #     curr_input_folder = os.path.dirname(self.selected_files[0])
-            # data[cfg_input_folder_key] = curr_input_folder
-
-            # curr_output_folder = self.saved_output_folder
-            # if self.selected_destination_folder:
-            #     curr_output_folder = self.selected_destination_folder
-            # data[cfg_output_folder_key] = curr_output_folder
-            
-            # if isinstance(self.settings, AliceSettings):
-            #     data[cfg_settings_key] = self.settings.to_diccy()
-
-            # with open(CONFIG_FILE, "w") as f:
-            #     json.dump(data, f)
-            
-            # self.saved_input_folder, self.saved_output_folder = curr_input_folder, curr_output_folder
-            
-            qsett = QSettings(ORG_NAME, APP_NAME)
-            qsett.setValue(QSETTINGS_KEY, self.settings.to_diccy())
-
-        except Exception:
-            pass
 
     # def center(self):
     #     # Get the screen's geometry
@@ -252,14 +185,16 @@ class MainWindow(QWidget):
     def selectFile(self):
         file_dialog = QFileDialog()
         # See SoX_important_info.txt for supporting more file extensions
-        self.selected_files, _ = file_dialog.getOpenFileNames(self, 'Select Files', directory=self.settings.input_folder, filter="Audio Files (*.mp3 *.wav *.aac *.wma *.aiff *.aif *.aiffc *.aifc)")
+        # Audio Files (*.mp3 *.wav *.aac *.wma *.aiff *.aif *.aiffc *.aifc)
+        self.selected_files, _ = file_dialog.getOpenFileNames(self, 'Select Files', directory=self.settings.input_folder, filter="Audio Files (*.mp3)")
+        self.selected_files.sort()
 
         # save path
         if len(self.selected_files) > 0:
             selected_input_folder = os.path.dirname(self.selected_files[0])
             if selected_input_folder and selected_input_folder != self.settings.input_folder:
                 self.settings.input_folder = selected_input_folder
-                self.saveConfig()
+                self.settings.save()
 
         # update list widget
         self.lst_selected_files.clear()  # Clear the list first
@@ -267,7 +202,7 @@ class MainWindow(QWidget):
             self.lst_selected_files.addItem(QListWidgetItem("No files selected"))
         else:
             for file in self.selected_files:
-                filename, extension = getFilenameAndExtensionTuple(file)
+                filename, extension = os.path.splitext(os.path.basename(file))
                 # item = QListWidgetItem(self.music_icon, f"{filename}{extension}")
                 # self.lst_selected_files.addItem(item)
                 self.lst_selected_files.addItem(f"{filename}{extension}")
@@ -280,7 +215,7 @@ class MainWindow(QWidget):
         selected_destination_folder = folder_dialog.getExistingDirectory(self, 'Select Folder', directory=self.settings.output_folder)
         if selected_destination_folder and selected_destination_folder != self.settings.output_folder:
             self.settings.output_folder = selected_destination_folder
-            self.saveConfig()
+            self.settings.save()
             self.lbl_selected_destination_folder.setText(selected_destination_folder)
             # self.lbl_selected_destination_folder.adjustSize()
             self.updateConvertButtonDisabled()
@@ -294,6 +229,7 @@ class MainWindow(QWidget):
             self.worker = ConversionWorker(self.selected_files, self.settings)
             self.worker.curr_file_progress_updated.connect(self.updateProgressDialogBar)
             self.worker.total_progress_updated.connect(self.updateProgressDialogText)
+            self.worker.current_task_updated.connect(self.updateProgressDialogTask)
             self.worker.time_remaining_updated.connect(self.updateProgressDialogTime)
             self.worker.finished.connect(self.onFinished)
             self.worker_thread = WorkerThread(self.worker)
@@ -310,6 +246,10 @@ class MainWindow(QWidget):
     @pyqtSlot(str)
     def updateProgressDialogText(self, text):
         self.progress_dialog.setLabelText(text)
+
+    @pyqtSlot(str)
+    def updateProgressDialogTask(self, text):
+        self.progress_dialog.setTaskText(text)
 
     @pyqtSlot(int)
     def updateProgressDialogBar(self, progress):
@@ -369,7 +309,7 @@ class MainWindow(QWidget):
     @pyqtSlot(AliceSettings)
     def saveAndCloseSettingsDialog(self, new_settings: AliceSettings):
         self.settings = new_settings
-        self.saveConfig()
+        self.settings.save()
 
         self.settings_dialog.accept()
         self.settings_dialog.deleteLater()
@@ -395,393 +335,6 @@ class MainWindow(QWidget):
     def close_window(self):
         self.close()
     # end borderless window code
-
-
-class ConversionWorker(QObject):
-    finished = pyqtSignal()
-    curr_file_progress_updated = pyqtSignal(int)  # Signal to update progress modal
-    total_progress_updated = pyqtSignal(str)
-    time_remaining_updated = pyqtSignal(int)
-    
-    MAX_CHARS = 20
-    CHUNK_DURATION = 3600 # 1 hour in seconds
-
-    OUTPUT_EXTENSION = ".mp3"
-
-    def __init__(self, input_files: str, settings: AliceSettings):
-        super().__init__()
-        self.input_files = input_files
-        self.settings = settings
-
-        self.process = None
-
-        self.time_remaining = 0
-        self.time_started_last_file = None
-        self.est_time_for_last_file = None
-        self.dynamic_multi = 1.0
-
-        self.stopped = False  # Flag to indicate if processing should be stopped
-
-        self.files_to_seq_merge = []
-        self.total_dur_seq_merge = 0
-        self.merged_out_path = ""
-
-        self.split_files = []
-
-    @pyqtSlot()
-    def convertFiles(self):
-        if len(self.input_files) > 0:
-            curr_or_next_file_duration = self.getFileDuration(self.input_files[0])
-
-        for index, input_file in enumerate(self.input_files):
-            if self.stopped:
-                return
-
-            filename, extension = getFilenameAndExtensionTuple(input_file)
-            
-            self.total_progress_updated.emit(f"{filename[:self.MAX_CHARS]}{'...' if len(filename) > self.MAX_CHARS else ''} ({index}/{len(self.input_files)})")
-
-            in_tmp_file_path = None
-            out_tmp_file_path = None
-
-            try:
-                # sox cant handle non-ANSI characters (could be in filename or OS username)
-                # so creating temp copy without weird characters for both input and output
-                # input file:
-                in_tmp_file_path = self.getTempFile(extension) # create temp file
-                # remember to call self.delTempFile(tmp_file) when done using it
-                self.copyFile(input_file, in_tmp_file_path) # copy input file to temp file
-
-                if self.settings.save_as_60_min_chunks and len(self.files_to_seq_merge) == 0:
-                    # final output path for merged files
-                    self.merged_out_path = self.generateDestinationPath(f"{filename}(Merged)")
-
-                # final output path for non-merged files
-                output_file = self.generateDestinationPath(filename)
-
-                out_tmp_file_path = self.getTempFile(self.OUTPUT_EXTENSION) # create temp file
-
-                self.estimateTotalTime(curr_or_next_file_duration, len(self.input_files) - index)
-
-                if self.settings.save_as_60_min_chunks:
-                    # if longer than 60 min: split into 60 min chunks then append remainder to to-merge list
-                    if curr_or_next_file_duration > self.CHUNK_DURATION:
-                        self.did_split = True
-                        self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension, split=True)
-
-                        # split file gets saved with diff name than original so this is empty file
-                        self.delTempFile(out_tmp_file_path)
-
-                        tmp_parent_dir = os.path.dirname(out_tmp_file_path)
-                        tmp_filename = os.path.splitext(os.path.basename(out_tmp_file_path))
-                        self.split_files = []
-                        for file_in_tmp_dir in os.listdir(tmp_parent_dir):
-                            file_in_tmp_dir_path = os.path.join(tmp_parent_dir, file_in_tmp_dir)
-                            if os.path.isfile(file_in_tmp_dir_path):
-                                if file_in_tmp_dir.startswith(tmp_filename):
-                                    self.split_files.append(file_in_tmp_dir_path)
-
-                        self.split_files.sort()
-
-                        output_file_path_without_extension, output_file_extension = os.path.splitext(output_file)
-                        for sf_idx, split_file in enumerate(self.split_files):
-                            split_file_without_extension, _ = os.path.splitext(split_file)
-                            split_file_number = split_file_without_extension[-3:]
-                            split_file_output_path = f"{output_file_path_without_extension}{split_file_number}{output_file_extension}"
-                            if sf_idx < len(self.split_files) - 1: # not last split file
-                                self.copyFile(split_file, split_file_output_path)
-                            else: # last split file
-                                # the last split file after splitting will prob be shorter than 60 min
-                                # so we include it in the merge array for next input files (it gets saved below if this is the last input file)
-                                last_split_file = self.split_files.pop()
-                                self.files_to_seq_merge.append(last_split_file)
-                                self.total_dur_seq_merge += self.getFileDuration(last_split_file)
-                                self.merged_out_path = f"{output_file_path_without_extension}{split_file_number}(Merged){output_file_extension}"
-                                output_file = split_file_output_path
-                    else:
-                        self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension)
-                        self.files_to_seq_merge.append(out_tmp_file_path)
-                        self.total_dur_seq_merge += curr_or_next_file_duration
-                else:
-                    self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension)
-                    self.copyFile(out_tmp_file_path, output_file) # copy temp output file to destination file
-
-                # not last file
-                if index + 1 < len(self.input_files):
-                    curr_or_next_file_duration = self.getFileDuration(self.input_files[index + 1])
-
-                    if self.settings.save_as_60_min_chunks:
-                        curr_chunk_diff = abs(self.total_dur_seq_merge - self.CHUNK_DURATION)
-                        next_chunk_diff = abs(self.total_dur_seq_merge + curr_or_next_file_duration - self.CHUNK_DURATION)
-                        # if already past 60 min chunk
-                        # or if closer to 60 min than we would be by including next file
-                        # or next file will be split
-                        if (self.total_dur_seq_merge >= self.CHUNK_DURATION
-                        or curr_chunk_diff <= next_chunk_diff
-                        or curr_or_next_file_duration > self.CHUNK_DURATION):
-                            # save/merge what we have now
-                            if len(self.files_to_seq_merge) == 1: # no need to call merge cus just 1 file
-                                self.copyFile(self.files_to_seq_merge[0], output_file) # copy temp output file to destination file
-                                self.delTempChunkFiles()
-                            else:
-                                self.mergeFiles()
-                else: # if last file
-                    if self.settings.save_as_60_min_chunks:
-                        if len(self.files_to_seq_merge) == 1: # no need to call merge cus just 1 file
-                            self.copyFile(self.files_to_seq_merge[0], output_file) # copy temp output file to destination file
-                            self.delTempChunkFiles()
-                        else:
-                            self.mergeFiles()
-
-
-            except Exception as e:
-                print(f"Exception in convertFiles, deleting temp files: {type(e)} ({e})")
-
-            self.delTempFile(in_tmp_file_path) # IMPORTANT
-            if not self.settings.save_as_60_min_chunks:
-                self.delTempFile(out_tmp_file_path) # IMPORTANT
-            
-            if len(self.split_files) > 0:
-                self.delTempSplitFiles()
-        
-        if len(self.files_to_seq_merge) > 0:
-            self.delTempChunkFiles()
-            
-        self.finished.emit()
-
-    def copyFile(self, src, dst):
-        try:
-            ret = shutil.copy(src, dst)
-            if not isinstance(ret, str) or len(ret) < 4:
-                print(f"shutil.copy returned: {f}")
-                return False
-            return True
-        except Exception as e:
-                print(f"Failed copyFile: {type(e)} ({e})")
-        return False
-
-    def getTempFile(self, extension):
-        temp_file_path = None
-        try:
-            # Create a temporary file
-            temp_file_fd, temp_file_path = tempfile.mkstemp(suffix=extension)
-            # Close the file descriptor as we won't be using it
-            os.close(temp_file_fd)
-            return temp_file_path
-        except Exception as e:
-            print(f"Failed getTempFile: {type(e)} ({e})")
-        return None
-
-
-    def delTempFile(self, tmp_file):
-        if tmp_file is not None and tmp_file != "":
-            try:
-                os.remove(tmp_file)
-            except Exception as e:
-                print(f"Failed to delete temp file: {type(e)} ({e})")
-    
-    def delTempChunkFiles(self):
-        for tmp_file in self.files_to_seq_merge:
-            self.delTempFile(tmp_file)
-        self.files_to_seq_merge = []
-        self.total_dur_seq_merge = 0
-        self.merged_out_path = ""
-    
-    def delTempSplitFiles(self):
-        for tmp_file in self.split_files:
-            self.delTempFile(tmp_file)
-        self.split_files = []
-
-
-    # inefficient to make a copy of every file at the start just to estimate time
-    # so just guessing based on one file
-    def getFileDuration(self, file):
-        command = ['sox-14-4-2/sox', '--i', '-D', file]
-        try:
-            result = subprocess.run(command, stdout=subprocess.PIPE, check=True)
-            return float(result.stdout.decode('utf-8'))
-        except subprocess.CalledProcessError as e:
-            print("Error:", e)
-        except Exception as e:
-            print(f"Failed getFileDuration: {type(e)} ({e})")
-
-    @pyqtSlot()
-    def estimateTotalTime(self, curr_file_duration, num_files_remaining):
-        try:
-            # to adjust to slower/faster computers
-            if self.time_started_last_file is not None and self.est_time_for_last_file is not None:
-                self.dynamic_multi *= (time.time() - self.time_started_last_file) / self.est_time_for_last_file
-                # print(f"Estimated time was: {self.est_time_for_last_file}")
-                # print(f"Actual time was: {time.time() - self.time_started_last_file}")
-                # print(f"Dynamic time multiplier set to: {self.dynamic_multi}")
-            self.time_started_last_file = time.time()
-            # 11 min mp3 file stats:
-            # tremolo only      ->  11.5 sec
-            # with noise        ->  +4.5 sec
-            # with compressor   ->  +2.5 sec
-            # with merge        ->  +7.4 sec
-
-            # maybe file type multi too, mp3 prob slowest
-            tremolo_multi = 0.0174
-            noise_multi = 0.0068 * self.settings.noise # True or False so multiplying by 1 or 0
-            compressor_multi = 0.0038 * self.settings.compressor
-            # merge happens once every x files so cant use it with dynamic multi calcs
-            merge_multi = 0.0112 * self.settings.save_as_60_min_chunks
-
-            multi = (tremolo_multi + noise_multi + compressor_multi) * self.dynamic_multi
-
-            self.est_time_for_last_file = curr_file_duration * multi
-
-            merge_time = merge_multi * self.dynamic_multi * curr_file_duration
-
-            time_est = math.ceil((self.est_time_for_last_file + merge_time) * num_files_remaining)
-            self.time_remaining = time_est
-            self.time_remaining_updated.emit(time_est)
-        except Exception as e:
-            print(f"Failed estimateTotalTime: {type(e)} ({e})")
-
-    def updateTimeRemaining(self, time_passed):
-        new_time_remaining = max(0, self.time_remaining - time_passed)
-        if math.ceil(new_time_remaining) != math.ceil(self.time_remaining): # no more than 1 update per sec
-            self.time_remaining_updated.emit(math.floor(new_time_remaining))
-        self.time_remaining = new_time_remaining
-
-    @pyqtSlot()
-    def mergeFiles(self):
-        if len(self.files_to_seq_merge) > 0:
-            self.total_progress_updated.emit("Merging files...")
-            try:
-                # So subprocess doesn't open a CMD window
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-
-                merged_fd, merged_path = tempfile.mkstemp(suffix=self.OUTPUT_EXTENSION) # Create a temporary file to store the output
-                os.close(merged_fd) # Close the file descriptor as we won't be using it
-
-                merge_command = ['sox-14-4-2/sox']
-                for file_to_merge in self.files_to_seq_merge:
-                    merge_command.append(file_to_merge)
-                merge_command.append(merged_path)
-
-                self.process = subprocess.Popen(merge_command, startupinfo=startupinfo)
-                while not self.stopped and self.process.poll() is None:  # Check if the process is still running
-                    time.sleep(0.1)
-                    self.updateTimeRemaining(0.1)
-                # check if user wants to cancel before proceeding further
-                if self.stopped:
-                    return
-                
-                self.copyFile(merged_path, self.merged_out_path) # copy temp output file to destination file
-
-            except subprocess.CalledProcessError as e:
-                print(f"Error encountered: {e}")
-            finally:
-                self.delTempFile(merged_path)
-
-        self.delTempChunkFiles()
-
-    @pyqtSlot()
-    def applyTremolo(self, in_file, out_file, extension, split=False):
-        noise_path = None
-
-        try:
-            # So subprocess doesn't open a CMD window
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-
-            # noise
-            if (self.settings.noise):
-                noise_fd, noise_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
-                os.close(noise_fd) # Close the file descriptor as we won't be using it
-                noise_command = ['sox-14-4-2/sox',in_file,noise_path,'synth','brownnoise','vol','0.05']
-                self.process = subprocess.Popen(noise_command, startupinfo=startupinfo)
-                while not self.stopped and self.process.poll() is None:  # Check if the process is still running
-                    time.sleep(0.1)
-                    self.updateTimeRemaining(0.1)
-                # check if user wants to cancel before proceeding further
-                if self.stopped:
-                    return
-
-            # puzzle together command based on settings
-            sox_command = ['sox-14-4-2/sox', '-S']
-            if self.settings.noise:
-                sox_command.append('-m')
-            sox_command.append(in_file)
-            if self.settings.noise:
-                sox_command.append(noise_path)
-            sox_command.extend([
-                '-c', '2',
-                out_file
-            ])
-            if split: # SPLIT
-                sox_command.extend(['trim', '0', f"{self.CHUNK_DURATION}"])
-            sox_command.extend([
-                'rate', '-v', '44100',
-                'tremolo', str(self.settings.frequency), '100',
-            ])
-            if self.settings.compressor:
-                sox_command.append('compand')
-                if self.settings.noise:
-                    sox_command.extend(['0.01,0.5', '-35,-20,0,-1', '0', '-20', '0.5'])
-                else:
-                    sox_command.extend(['0.05,1', '-40,-50,-20,-10,0,-10', '0', '-60', '0.5'])
-            if split: # SPLIT
-                sox_command.extend([':', 'newfile', ':', 'restart'])
-
-            
-            self.curr_file_progress_updated.emit(0)
-
-            self.process = subprocess.Popen(sox_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, startupinfo=startupinfo)
-            while not self.stopped and self.process.poll() is None:  # Check if the process is still running
-                start_time = time.time()
-
-                std_output = self.process.stdout.readline()  # Read a line from stdout
-                if std_output:  # Check if the line is not empty
-                    progress = self.parseProgress(std_output)  # Parse the progress information
-                    if progress is not None:  # Check if progress is valid
-                        self.curr_file_progress_updated.emit(progress)  # Emit signal with progress value
-                
-                time_elapsed = time.time() - start_time
-                self.updateTimeRemaining(time_elapsed)
-
-            self.curr_file_progress_updated.emit(99)
-
-        except subprocess.CalledProcessError as e:
-            print(f"Error encountered: {e}")
-        finally:
-            self.delTempFile(noise_path)
-
-    def stopConverting(self):
-        self.stopped = True  # Set the flag to stop processing
-        if self.process is not None:
-            self.process.terminate()
-            self.process.wait()
-
-    def generateDestinationPath(self, filename):
-        destination_path = os.path.join(self.settings.output_folder, f"{filename}(Converted).mp3")
-        return destination_path
-
-    def parseProgress(self, std_output: str):
-        if std_output.startswith("In:") and len(std_output) > 7:
-            try:
-                return int(float(std_output[3:7]))
-            except ValueError:
-                pass
-        return 0
-
-
-class WorkerThread(QThread):
-    def __init__(self, worker):
-        super().__init__()
-        self.worker = worker
-
-    def run(self):
-        self.worker.convertFiles()
-
-    def quit(self):
-        self.worker.stopConverting()
-        self.worker.deleteLater()
-        super().quit()
 
 
 class CustomProgressDialog(QDialog):
@@ -826,12 +379,16 @@ class CustomProgressDialog(QDialog):
         self.label = QLabel("")
         self.label.setAlignment(Qt.AlignCenter)
 
+        self.task_label = QLabel("")
+        self.task_label.setObjectName("not_bold")
+        self.task_label.setAlignment(Qt.AlignCenter)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setAlignment(Qt.AlignCenter)
         self.progress_bar.setRange(0, 100)
 
         self.time_label = QLabel("")
-        self.time_label.setObjectName("not_bold") # reusing style
+        self.time_label.setObjectName("not_bold")
         self.time_label.setAlignment(Qt.AlignCenter)
         
         self.cancel_button = QPushButton("Cancel")
@@ -846,6 +403,7 @@ class CustomProgressDialog(QDialog):
 
         layout.addWidget(self.title_label)
         layout.addWidget(self.label)
+        layout.addWidget(self.task_label)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.time_label)
         layout.addWidget(self.cancel_button)
@@ -859,6 +417,9 @@ class CustomProgressDialog(QDialog):
 
     def setLabelText(self, text):
         self.label.setText(text)
+
+    def setTaskText(self, text):
+        self.task_label.setText(text)
 
     def setValue(self, value):
         self.progress_bar.setValue(value)
@@ -876,20 +437,20 @@ class CustomProgressDialog(QDialog):
 class CustomSettingsDialog(QDialog):
     saved = pyqtSignal(AliceSettings)
 
-    ITEM_HEIGHT = 30
+    ITEM_HEIGHT = 24
 
     def __init__(self, parent, saved_settings: AliceSettings):
         super().__init__(parent)
         
         self.saved_settings = saved_settings
-        self.chosen_settings = AliceSettings.from_diccy(saved_settings.to_diccy())
+        self.chosen_settings = saved_settings.copy()
         
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowModality(2)
 
-        size = QSize(int(WINDOW_WIDTH * 0.8), int(WINDOW_HEIGHT * 0.8))
+        size = QSize(int(WINDOW_WIDTH * 0.8), int(WINDOW_HEIGHT * 0.65))
         shadow_offset = 5
 
         self.setFixedSize(size)
@@ -916,6 +477,7 @@ class CustomSettingsDialog(QDialog):
         self.title_label = QLabel("Settings")
         self.title_label.setObjectName("dialog_title")
         self.title_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.title_label.setContentsMargins(16,0,0,0)
         
         self.restore_defaults_button = QPushButton("Restore Defaults")
         self.restore_defaults_button.setObjectName("restore_defaults")
@@ -1034,6 +596,20 @@ class CustomSettingsDialog(QDialog):
         self.chosen_settings.save_as_60_min_chunks = state == 2 # 0, 1, 2 => unchecked, intermediate, checked
 
 
+class WorkerThread(QThread):
+    def __init__(self, worker: ConversionWorker):
+        super().__init__()
+        self.worker = worker
+
+    def run(self):
+        self.worker.convertFiles()
+
+    def quit(self):
+        self.worker.stopConverting()
+        self.worker.deleteLater()
+        super().quit()
+
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
@@ -1045,7 +621,7 @@ if __name__ == '__main__':
             app.setStyleSheet(_style)
     except:
         try:
-            with open("src/style.qss", "r") as f:
+            with open("src/old_style.qss", "r") as f:
                 _style = f.read()
                 app.setStyleSheet(_style)
         except:

@@ -1,0 +1,465 @@
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
+from alice_settings import AliceSettings
+import os
+import time
+import subprocess
+import math
+import shutil
+import tempfile
+import platform
+from mutagen.mp3 import MP3
+
+class ConversionWorker(QObject):
+    finished = pyqtSignal()
+    curr_file_progress_updated = pyqtSignal(int)  # Signal to update progress modal
+    total_progress_updated = pyqtSignal(str)
+    current_task_updated = pyqtSignal(str)
+    time_remaining_updated = pyqtSignal(int)
+    
+    MAX_CHARS = 20
+    CHUNK_DURATION = 3600 # 1 hour in seconds
+
+    OUTPUT_EXTENSION = ".mp3"
+
+    def __init__(self, input_files: list, settings: AliceSettings):
+        super().__init__()
+        self.input_files = input_files
+        self.settings = settings
+
+        self.process = None
+        
+        # So subprocess doesn't open a CMD windowif platform.system() == "Windows":
+        self.startupinfo = None
+        if platform.system() == "Windows":
+            self.startupinfo = subprocess.STARTUPINFO()
+            self.startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            self.startupinfo.wShowWindow = subprocess.SW_HIDE
+
+        self.file_durations = []
+        self.estimated_times = []
+
+        self.estimation_base_multi = 1.0
+        self.estimated_merging_times = []
+
+        self.time_remaining = 0
+        self.time_started_last_file = None
+        self.time_finished_last_file = None
+        self.est_time_for_last_file = None
+        self.dynamic_multi = 1.0
+
+        self.stopped = False  # Flag to indicate if processing should be stopped
+
+        self.files_to_seq_merge = []
+        self.total_dur_seq_merge = 0
+        self.merged_out_path = ""
+
+        self.split_files = []
+
+    @pyqtSlot()
+    def convertFiles(self):
+        self.current_task_updated.emit("Initializing...")
+        self.fetchFileDurations()
+        self.initEstimationMultiplier()
+        self.initEstimatedMergingTimes()
+        self.initEstimatedTimes()
+
+        for index, input_file in enumerate(self.input_files):
+            if self.stopped:
+                return
+
+            self.estimateRemainingTime(index)
+            curr_file_duration = self.file_durations[index]
+
+            filename, extension = os.path.splitext(os.path.basename(input_file))
+            
+            self.total_progress_updated.emit(f"{filename[:self.MAX_CHARS]}{'...' if len(filename) > self.MAX_CHARS else ''} ({index}/{len(self.input_files)})")
+            self.current_task_updated.emit("Preparing file...")
+            self.curr_file_progress_updated.emit(0)
+
+            in_tmp_file_path = None
+            out_tmp_file_path = None
+
+            try:
+                # sox cant handle non-ANSI characters (could be in filename or OS username)
+                # so creating temp copy without weird characters for both input and output
+                # input file:
+                in_tmp_file_path = self.getTempFile(extension) # create temp file
+                # remember to call self.delTempFile(tmp_file) when done using it
+                self.copyFile(input_file, in_tmp_file_path) # copy input file to temp file
+
+                if self.settings.save_as_60_min_chunks and len(self.files_to_seq_merge) == 0:
+                    # final output path for merged files
+                    self.merged_out_path = self.generateDestinationPath(f"{filename}(Merged)")
+
+                # final output path for non-merged files
+                output_file = self.generateDestinationPath(filename)
+
+                out_tmp_file_path = self.getTempFile(self.OUTPUT_EXTENSION) # create temp file
+
+                # self.estimateTotalTime(curr_file_duration, len(self.input_files) - index)
+
+                if self.settings.save_as_60_min_chunks:
+                    # if longer than 60 min: split into 60 min chunks then append remainder to to-merge list
+                    if curr_file_duration > self.CHUNK_DURATION:
+                        self.did_split = True
+                        self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension, split=True)
+
+                        # split file gets saved with diff name than original so this is empty file
+                        self.delTempFile(out_tmp_file_path)
+
+                        tmp_parent_dir = os.path.dirname(out_tmp_file_path)
+                        tmp_filename = os.path.splitext(os.path.basename(out_tmp_file_path))
+                        self.split_files = []
+                        for file_in_tmp_dir in os.listdir(tmp_parent_dir):
+                            file_in_tmp_dir_path = os.path.join(tmp_parent_dir, file_in_tmp_dir)
+                            if os.path.isfile(file_in_tmp_dir_path):
+                                if file_in_tmp_dir.startswith(tmp_filename):
+                                    self.split_files.append(file_in_tmp_dir_path)
+
+                        self.split_files.sort()
+
+                        output_file_path_without_extension, output_file_extension = os.path.splitext(output_file)
+                        for sf_idx, split_file in enumerate(self.split_files):
+                            split_file_without_extension, _ = os.path.splitext(split_file)
+                            split_file_number = split_file_without_extension[-3:]
+                            split_file_output_path = f"{output_file_path_without_extension}{split_file_number}{output_file_extension}"
+                            if sf_idx < len(self.split_files) - 1: # not last split file
+                                self.copyFileAndFixMetadata(split_file, split_file_output_path)
+                            else: # last split file
+                                # the last split file after splitting will prob be shorter than 60 min
+                                # so we include it in the merge array for next input files (it gets saved below if this is the last input file)
+                                last_split_file = self.split_files.pop()
+                                self.files_to_seq_merge.append(last_split_file)
+                                self.total_dur_seq_merge += self.getFileDuration(last_split_file)
+                                self.merged_out_path = f"{output_file_path_without_extension}{split_file_number}(Merged){output_file_extension}"
+                                output_file = split_file_output_path
+                    else:
+                        self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension)
+                        self.files_to_seq_merge.append(out_tmp_file_path)
+                        self.total_dur_seq_merge += curr_file_duration
+                else:
+                    self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension)
+                    self.copyFileAndFixMetadata(out_tmp_file_path, output_file) # copy temp output file to destination file
+
+                # not last file
+                if index + 1 < len(self.input_files):
+                    next_file_duration = self.file_durations[index + 1]
+
+                    if self.settings.save_as_60_min_chunks:
+                        curr_chunk_diff = abs(self.total_dur_seq_merge - self.CHUNK_DURATION)
+                        next_chunk_diff = abs(self.total_dur_seq_merge + next_file_duration - self.CHUNK_DURATION)
+                        # if already past 60 min chunk
+                        # or if closer to 60 min than we would be by including next file
+                        # or next file will be split
+                        if (self.total_dur_seq_merge >= self.CHUNK_DURATION
+                        or curr_chunk_diff <= next_chunk_diff
+                        or next_file_duration > self.CHUNK_DURATION):
+                            # save/merge what we have now
+                            if len(self.files_to_seq_merge) == 1: # no need to call merge cus just 1 file
+                                self.copyFileAndFixMetadata(self.files_to_seq_merge[0], output_file) # copy temp output file to destination file
+                                self.delTempChunkFiles()
+                            else:
+                                self.mergeFiles()
+                else: # if last file
+                    if self.settings.save_as_60_min_chunks:
+                        if len(self.files_to_seq_merge) == 1: # no need to call merge cus just 1 file
+                            self.copyFileAndFixMetadata(self.files_to_seq_merge[0], output_file) # copy temp output file to destination file
+                            self.delTempChunkFiles()
+                        else:
+                            self.mergeFiles()
+
+
+            except Exception as e:
+                print(f"Exception in convertFiles, deleting temp files: {type(e)} ({e})")
+
+            self.delTempFile(in_tmp_file_path) # IMPORTANT
+            if not self.settings.save_as_60_min_chunks:
+                self.delTempFile(out_tmp_file_path) # IMPORTANT
+            
+            if len(self.split_files) > 0:
+                self.delTempSplitFiles()
+            
+            self.current_task_updated.emit("")
+        
+        if len(self.files_to_seq_merge) > 0:
+            self.delTempChunkFiles()
+            
+        self.finished.emit()
+
+    def copyFile(self, src, dst):
+        try:
+            ret = shutil.copy(src, dst)
+            if not isinstance(ret, str) or len(ret) < 4:
+                print(f"shutil.copy returned: {ret}")
+                return False
+            return True
+        except Exception as e:
+                print(f"Failed copyFile: {type(e)} ({e})")
+        return False
+    
+    def copyFileAndFixMetadata(self, src, dst):
+        if src.endswith(".mp3"):
+            mutagen_data = MP3(src)
+            for md_key in mutagen_data:
+                if hasattr(mutagen_data[md_key], 'encoding') and hasattr(mutagen_data[md_key], 'text'):
+                    mutagen_data[md_key].encoding = 3
+                    mutagen_data[md_key].text = [text.encode('latin1').decode('utf-8') for text in mutagen_data[md_key].text]
+            mutagen_data.save()
+        self.copyFile(src, dst)
+
+    def getTempFile(self, extension):
+        temp_file_path = None
+        try:
+            # Create a temporary file
+            temp_file_fd, temp_file_path = tempfile.mkstemp(suffix=extension)
+            # Close the file descriptor as we won't be using it
+            os.close(temp_file_fd)
+            return temp_file_path
+        except Exception as e:
+            print(f"Failed getTempFile: {type(e)} ({e})")
+        return None
+
+
+    def delTempFile(self, tmp_file):
+        if tmp_file is not None and tmp_file != "":
+            try:
+                os.remove(tmp_file)
+            except Exception as e:
+                print(f"Failed to delete temp file: {type(e)} ({e})")
+    
+    def delTempChunkFiles(self):
+        for tmp_file in self.files_to_seq_merge:
+            self.delTempFile(tmp_file)
+        self.files_to_seq_merge = []
+        self.total_dur_seq_merge = 0
+        self.merged_out_path = ""
+    
+    def delTempSplitFiles(self):
+        for tmp_file in self.split_files:
+            self.delTempFile(tmp_file)
+        self.split_files = []
+
+    def getFileDuration(self, file):
+        try:
+            if file.endswith('.mp3'):
+                return MP3(file).info.length
+        except Exception as e:
+            print(f"Failed getFileDuration: {type(e)} ({e})")
+        return 1
+
+    def fetchFileDurations(self):
+        for inp_file in self.input_files:
+            self.file_durations.append(self.getFileDuration(inp_file))
+    
+    def initEstimationMultiplier(self):
+        # 11 min mp3 file stats:
+        # tremolo only      ->  11.5 sec
+        # with noise        ->  +4.5 sec
+        # with compressor   ->  +2.5 sec
+
+        # maybe file type multi too, mp3 prob slowest
+        tremolo_multi = 0.0174
+        noise_multi = 0.0068 * self.settings.noise # True or False so multiplying by 1 or 0
+        compressor_multi = 0.0038 * self.settings.compressor
+
+        self.estimation_base_multi = (tremolo_multi + noise_multi + compressor_multi)
+    
+    def initEstimatedMergingTimes(self):
+        # merge doesnt always happen so predict how many merges will happen
+
+        # merge 1 hour total -> 35 sec
+
+        num_merges = 0
+        curr_durations = []
+        for dur_idx, file_dur in enumerate(self.file_durations):
+            curr_durations.append(file_dur)
+            if dur_idx < len(self.file_durations) - 1:
+                next_dur = self.file_durations[dur_idx + 1]
+                curr_dur_sum = sum(curr_durations)
+
+                curr_chunk_diff = abs(curr_dur_sum - self.CHUNK_DURATION)
+                next_chunk_diff = abs(curr_dur_sum + next_dur - self.CHUNK_DURATION)
+
+                if (curr_dur_sum >= self.CHUNK_DURATION
+                or curr_chunk_diff <= next_chunk_diff
+                or next_dur > self.CHUNK_DURATION):
+                    if len(curr_durations) > 1:
+                        num_merges += 1
+                        curr_durations = []
+            else:
+                if len(curr_durations) > 1:
+                    num_merges += 1
+        
+        self.estimated_merging_times =  num_merges * [35]
+
+    def initEstimatedTimes(self):
+        for file_dur in self.file_durations:
+            self.estimated_times.append(self.estimation_base_multi * file_dur)
+
+    @pyqtSlot()
+    def estimateRemainingTime(self, idx):
+        # to adjust to slower/faster computers
+        if self.time_started_last_file is not None and self.time_finished_last_file is not None and self.est_time_for_last_file is not None:
+            # print(f"Dynamic time multiplier was: {self.dynamic_multi}")
+            self.dynamic_multi *= (self.time_finished_last_file - self.time_started_last_file) / self.est_time_for_last_file
+            # print(f"Estimated time was: {self.est_time_for_last_file}")
+            # print(f"Actual time was: {self.time_finished_last_file - self.time_started_last_file}")
+            # print(f"Dynamic time multiplier set to: {self.dynamic_multi}")
+            # print()
+
+        # setting this ahead of time
+        self.est_time_for_last_file = self.estimated_times[idx] * self.dynamic_multi
+
+        # self.estimated_merging_times gets popped every merge so sum should be correct
+        self.time_remaining = math.ceil((sum(self.estimated_times[idx:]) + sum(self.estimated_merging_times)) * self.dynamic_multi)
+        self.time_remaining_updated.emit(self.time_remaining)
+
+
+    def updateTimeRemaining(self, time_passed):
+        new_time_remaining = max(0, self.time_remaining - time_passed)
+        if math.ceil(new_time_remaining) != math.ceil(self.time_remaining): # no more than 1 update per sec
+            self.time_remaining_updated.emit(math.floor(new_time_remaining))
+        self.time_remaining = new_time_remaining
+
+    @pyqtSlot()
+    def mergeFiles(self):
+        if len(self.files_to_seq_merge) > 0:
+            try:
+                self.estimated_merging_times.pop()
+            except Exception as e:
+                print(f"Error encountered: mergeFiles :: self.estimated_merging_times.pop() :: {e}")
+
+            self.current_task_updated.emit("Merging previous files...")
+            try:
+
+                merged_fd, merged_path = tempfile.mkstemp(suffix=self.OUTPUT_EXTENSION) # Create a temporary file to store the output
+                os.close(merged_fd) # Close the file descriptor as we won't be using it
+
+                merge_command = ['sox-14-4-2/sox']
+                for file_to_merge in self.files_to_seq_merge:
+                    merge_command.append(file_to_merge)
+                merge_command.append(merged_path)
+
+                self.process = subprocess.Popen(merge_command, startupinfo=self.startupinfo)
+                while not self.stopped and self.process.poll() is None:  # Check if the process is still running
+                    time.sleep(0.1)
+                    self.updateTimeRemaining(0.1)
+                # check if user wants to cancel before proceeding further
+                if self.stopped:
+                    return
+                
+                self.copyFileAndFixMetadata(merged_path, self.merged_out_path) # copy temp output file to destination file
+
+            except subprocess.CalledProcessError as e:
+                print(f"Error encountered: {e}")
+            finally:
+                self.delTempFile(merged_path)
+
+        self.delTempChunkFiles()
+
+    @pyqtSlot()
+    def applyTremolo(self, in_file, out_file, extension, split=False):
+        noise_path = None
+        self.time_started_last_file = time.time()
+        try:
+            # noise
+            if (self.settings.noise):
+                noise_fd, noise_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
+                os.close(noise_fd) # Close the file descriptor as we won't be using it
+
+                self.current_task_updated.emit("Generating noise...")
+
+                noise_command = ['sox-14-4-2/sox',in_file,noise_path,'synth','brownnoise','vol','0.05']
+                self.process = subprocess.Popen(noise_command, startupinfo=self.startupinfo)
+                while not self.stopped and self.process.poll() is None:  # Check if the process is still running
+                    time.sleep(0.1)
+                    self.updateTimeRemaining(0.1)
+                # check if user wants to cancel before proceeding further
+                if self.stopped:
+                    return
+
+            self.current_task_updated.emit("Applying effects...")
+
+            # puzzle together command based on settings
+            sox_command = ['sox-14-4-2/sox', '-S']
+            if self.settings.noise:
+                sox_command.append('-m')
+            sox_command.extend(['-v', '0.95', in_file])
+            if self.settings.noise:
+                sox_command.append(noise_path)
+            sox_command.extend([
+                '-c', '2',
+                out_file
+            ])
+            if split: # SPLIT
+                sox_command.extend(['trim', '0', f"{self.CHUNK_DURATION}"])
+            sox_command.extend([
+                'rate', '-v', '44100',
+                'tremolo', str(self.settings.frequency), '100',
+            ])
+            if self.settings.compressor:
+                sox_command.append('compand')
+                if self.settings.noise:
+                    sox_command.extend(['0.01,0.5', '-35,-20,0,-1', '0', '-20', '0.5'])
+                else:
+                    sox_command.extend(['0.05,1', '-40,-50,-20,-10,0,-10', '0', '-60', '0.5'])
+            sox_command.extend(['gain', '-3'])
+            if split: # SPLIT
+                sox_command.extend([':', 'newfile', ':', 'restart'])
+
+            
+            self.curr_file_progress_updated.emit(0)
+
+            fake_progress_started_time = None
+            fake_progress = 0
+
+            self.process = subprocess.Popen(sox_command, stderr=subprocess.PIPE, text=True, startupinfo=self.startupinfo)
+            while not self.stopped and self.process.poll() is None:  # Check if the process is still running
+                start_time = time.time()
+
+                std_output = self.process.stderr.readline() # Read lines from stdout (blocking until something is ready)
+                if std_output:  # Check if the line is not empty
+                    progress = self.parseProgress(std_output)  # Parse the progress information
+                    if progress is not None:  # Check if progress is valid
+                        if progress >= 90: # (stuck at 100% (multiplied by 0.9 in parseProgress))
+                            if fake_progress_started_time is None:
+                                fake_progress_started_time = int(time.time())
+                            if (int(time.time()) - fake_progress_started_time) % 3 == 0:
+                                fake_progress += 1 # Show a lil movement on the progress bar every 3 sec
+                        else:
+                            fake_progress = progress
+                        self.curr_file_progress_updated.emit(min(fake_progress, 99))  # Emit signal with progress value
+                
+                time_elapsed = time.time() - start_time
+                self.updateTimeRemaining(time_elapsed)
+
+            self.curr_file_progress_updated.emit(99)
+
+        except subprocess.CalledProcessError as e:
+            print(f"Error encountered: {e}")
+        finally:
+            self.delTempFile(noise_path)
+        
+        self.time_finished_last_file = time.time()
+        
+        self.current_task_updated.emit("Finishing file...")
+
+    def stopConverting(self):
+        self.stopped = True  # Set the flag to stop processing
+        if self.process is not None:
+            self.process.terminate()
+            self.process.wait()
+            self.proces = None
+
+    def generateDestinationPath(self, filename):
+        destination_path = os.path.join(self.settings.output_folder, f"{filename}(Converted).mp3")
+        return destination_path
+
+    def parseProgress(self, std_output: str):
+        if std_output.startswith("In:") and len(std_output) > 7:
+            try:
+                return int(float(std_output[3:7].replace("%", "")) * 0.9)
+            except Exception as e:
+                print(f"Error encountered: parseProgress :: {e}")
+        return None
+
