@@ -356,7 +356,7 @@ class CustomProgressDialog(QDialog):
 
         if parent:
             parent_center = parent.geometry().center()
-            self.move(parent_center - self.rect().center())
+            self.move(parent_center + QPoint(shadow_offset, shadow_offset) - self.rect().center())
 
         border = QWidget(self)
         border.setObjectName("border")
@@ -458,7 +458,7 @@ class CustomSettingsDialog(QDialog):
 
         if parent:
             parent_center = parent.geometry().center()
-            self.move(parent_center - self.rect().center())
+            self.move(parent_center + QPoint(shadow_offset, shadow_offset) - self.rect().center())
 
         border = QWidget(self)
         border.setObjectName("border")

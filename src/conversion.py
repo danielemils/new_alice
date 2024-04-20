@@ -111,6 +111,9 @@ class ConversionWorker(QObject):
                     if curr_file_duration > self.CHUNK_DURATION:
                         self.did_split = True
                         self.applyTremolo(in_tmp_file_path, out_tmp_file_path, extension, split=True)
+                        
+                        # sleep a little to wait for the files to be ready (just to be safe)
+                        time.sleep(max(2, curr_file_duration * 0.00001))
 
                         # split file gets saved with diff name than original so this is empty file
                         self.delTempFile(out_tmp_file_path)
@@ -262,12 +265,12 @@ class ConversionWorker(QObject):
     
     def initEstimationMultiplier(self):
         # 11 min mp3 file stats:
-        # tremolo only      ->  11.5 sec
-        # with noise        ->  +4.5 sec
-        # with compressor   ->  +2.5 sec
+        # tremolo only (with dc offset check)   ->  12.5 sec
+        # with noise                            ->  +4.5 sec
+        # with compressor                       ->  +2.5 sec
 
         # maybe file type multi too, mp3 prob slowest
-        tremolo_multi = 0.0174
+        tremolo_multi = 0.0189
         noise_multi = 0.0068 * self.settings.noise # True or False so multiplying by 1 or 0
         compressor_multi = 0.0038 * self.settings.compressor
 
@@ -359,7 +362,7 @@ class ConversionWorker(QObject):
                 
                 self.copyFileAndFixMetadata(merged_path, self.merged_out_path) # copy temp output file to destination file
 
-            except subprocess.CalledProcessError as e:
+            except Exception as e:
                 print(f"Error encountered: {e}")
             finally:
                 self.delTempFile(merged_path)
@@ -367,28 +370,24 @@ class ConversionWorker(QObject):
         self.delTempChunkFiles()
 
     def createTempNoiseFile(self, in_file, extension):
-        try:
-            noise_fd, noise_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
-            os.close(noise_fd) # Close the file descriptor as we won't be using it
+        noise_fd, noise_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
+        os.close(noise_fd) # Close the file descriptor as we won't be using it
 
-            self.current_task_updated.emit("Generating noise...")
+        self.current_task_updated.emit("Generating noise...")
 
-            noise_command = ['sox-14-4-2/sox',in_file,noise_path,'synth','brownnoise','vol','0.05']
-            self.process = subprocess.Popen(noise_command, startupinfo=self.startupinfo)
-            while not self.stopped and self.process.poll() is None:  # Check if the process is still running
-                time.sleep(0.1)
-                self.updateTimeRemaining(0.1)
-            # check if user wants to cancel before proceeding further
-            if self.stopped:
-                raise AliceStoppingException()
-        except subprocess.CalledProcessError as e:
-            print(f"Error encountered: {e}")
-        finally:
-            self.delTempFile(noise_path)
+        noise_command = ['sox-14-4-2/sox',in_file,noise_path,'synth','brownnoise','vol','0.05']
+        self.process = subprocess.Popen(noise_command, startupinfo=self.startupinfo)
+        while not self.stopped and self.process.poll() is None:  # Check if the process is still running
+            time.sleep(0.1)
+            self.updateTimeRemaining(0.1)
+        # check if user wants to cancel before proceeding further
+        if self.stopped:
+            raise AliceStoppingException()
+        
+        return noise_path
 
     # Check if file has DC Offset and fix it (bad quality files like Wuthering Heights chapter 1)
-    def checkAndFixDCOffset(self, in_file):
-        # try:
+    def fixDCOffsetAndGetVolumeMulti(self, in_file, extension):
         stats_command = ['sox-14-4-2/sox',in_file, '-n', 'stat']
         self.process = subprocess.Popen(stats_command, stderr=subprocess.PIPE, text=True, startupinfo=self.startupinfo)
         while not self.stopped and self.process.poll() is None:  # Check if the process is still running
@@ -397,41 +396,48 @@ class ConversionWorker(QObject):
         if self.stopped:
             raise AliceStoppingException()
         dc_offset = 0
+        vol_multi = 1
         try:
             for std_err_line in self.process.stderr.readlines():
-                if isinstance(std_err_line, str) and std_err_line.startswith("Mean") and "amplitude" in std_err_line:
-                    dc_offset = float(std_err_line.strip().split(":")[-1].strip())
+                if isinstance(std_err_line, str):
+                    if std_err_line.startswith("Mean") and "amplitude" in std_err_line:
+                        dc_offset = float(std_err_line.strip().split(":")[-1].strip())
+                    if std_err_line.startswith("Volume") and "adjustment" in std_err_line:
+                        vol_multi = float(std_err_line.strip().split(":")[-1].strip())
         except Exception as e:
-            print(f"Error encountered: checkAndFixDCOffset :: reading/castng mean amplitude stat :: {e}")
+            print(f"Error encountered: fixDCOffsetAndGetVolumeMulti :: reading/castng mean amplitude stat :: {e}")
 
-        if round(dc_offset, 2) != 0: # Check if dc offset is so large that we need to fix it
+        # Check if dc offset is so large that we need to fix it
+        if round(dc_offset, 2) != 0.0:
             print(f"Found significant DC Offset of {dc_offset}, fixing...")
 
-        ## TODO
-        #     noise_fd, noise_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
-        #     os.close(noise_fd) # Close the file descriptor as we won't be using it
+            fixed_dc_fd, fixed_dc_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
+            os.close(fixed_dc_fd) # Close the file descriptor as we won't be using it
 
-        #     self.current_task_updated.emit("Generating noise...")
+            self.current_task_updated.emit("Bad DC offset, fixing it... (takes extra time)")
 
-        #     noise_command = ['sox-14-4-2/sox',in_file,noise_path, 'synth', 'brownnoise', 'vol', '0.05']
-        #     self.process = subprocess.Popen(noise_command, startupinfo=self.startupinfo)
-        #     while not self.stopped and self.process.poll() is None:  # Check if the process is still running
-        #         time.sleep(0.1)
-        #         self.updateTimeRemaining(0.1)
-        #     # check if user wants to cancel before proceeding further
-        #     if self.stopped:
-        #         raise AliceStoppingException()
-        # except subprocess.CalledProcessError as e:
-        #     print(f"Error encountered: {e}")
-        # finally:
-        #     self.delTempFile(noise_path)
+            fix_dc_command = ['sox-14-4-2/sox',in_file,fixed_dc_path, 'dcshift', f"{-dc_offset}"]
+            self.process = subprocess.Popen(fix_dc_command, startupinfo=self.startupinfo)
+            while not self.stopped and self.process.poll() is None:  # Check if the process is still running
+                time.sleep(0.1)
+                self.updateTimeRemaining(-0.1) # add to time est cus this wasnt included in estimate
+            # check if user wants to cancel before proceeding further
+            if self.stopped:
+                raise AliceStoppingException()
+            
+            return fixed_dc_path, vol_multi
+        
+        return None, vol_multi
 
     @pyqtSlot()
     def applyTremolo(self, in_file, out_file, extension, split=False):
         noise_path = None
         self.time_started_last_file = time.time()
         try:
-            self.checkAndFixDCOffset(in_file)
+            fixed_dc_path, vol_multi = self.fixDCOffsetAndGetVolumeMulti(in_file, extension)
+            print(vol_multi)
+            if fixed_dc_path != None:
+                in_file = fixed_dc_path
 
             if (self.settings.noise):
                 noise_path = self.createTempNoiseFile(in_file, extension)
@@ -439,28 +445,23 @@ class ConversionWorker(QObject):
             self.current_task_updated.emit("Applying effects...")
 
             # puzzle together command based on settings
-            sox_command = ['sox-14-4-2/sox', '-S', '--norm']
+            sox_command = ['sox-14-4-2/sox', '-S']
             if self.settings.noise:
                 sox_command.append('-m')
                 sox_command.append(noise_path)
-            sox_command.extend(['-v', '0.95', in_file])
+            sox_command.extend(['-v', str(vol_multi), in_file])
             sox_command.extend([
                 '-c', '2',
                 out_file
             ])
             if split: # SPLIT
                 sox_command.extend(['trim', '0', f"{self.CHUNK_DURATION}"])
-            sox_command.extend([
-                'rate', '-v', '44100',
-                'tremolo', str(self.settings.frequency), '100',
-            ])
+            sox_command.extend(['rate', '-v', '44100'])
             if self.settings.compressor:
-                sox_command.append('compand')
-                if self.settings.noise:
-                    sox_command.extend(['0.01,0.5', '-35,-20,0,-1', '0', '-20', '0.5'])
-                else:
-                    sox_command.extend(['0.05,1', '-40,-50,-20,-10,0,-10', '0', '-60', '0.5'])
-            sox_command.extend(['gain', '-3'])
+                # sox_command.extend(['compand', '0.01,0.5', '-35,-20,0,-1', '0', '-20', '0.5'])
+                sox_command.extend(['compand', '0.01,1', '-30,-10,0,-1', '-1', '0', '0.02'])
+            sox_command.extend(['gain', '-1'])
+            sox_command.extend(['tremolo', str(self.settings.frequency), '100'])
             if split: # SPLIT
                 sox_command.extend([':', 'newfile', ':', 'restart'])
 
@@ -492,10 +493,11 @@ class ConversionWorker(QObject):
 
             self.curr_file_progress_updated.emit(99)
 
-        except subprocess.CalledProcessError as e:
+        except Exception as e:
             print(f"Error encountered: {e}")
         finally:
             self.delTempFile(noise_path)
+            self.delTempFile(fixed_dc_path)
         
         self.time_finished_last_file = time.time()
         
