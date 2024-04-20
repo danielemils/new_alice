@@ -437,8 +437,6 @@ class CustomProgressDialog(QDialog):
 class CustomSettingsDialog(QDialog):
     saved = pyqtSignal(AliceSettings)
 
-    ITEM_HEIGHT = 24
-
     def __init__(self, parent, saved_settings: AliceSettings):
         super().__init__(parent)
         
@@ -452,6 +450,8 @@ class CustomSettingsDialog(QDialog):
 
         size = QSize(int(WINDOW_WIDTH * 0.8), int(WINDOW_HEIGHT * 0.65))
         shadow_offset = 5
+
+        item_height = 24
 
         self.setFixedSize(size)
         self.setContentsMargins(10, 10, 10, 10)
@@ -484,17 +484,17 @@ class CustomSettingsDialog(QDialog):
         self.restore_defaults_button.clicked.connect(self.restoreDefaults)
 
         self.noise_checkbox = QCheckBox("Noise")
-        self.noise_checkbox.setFixedHeight(self.ITEM_HEIGHT)
+        self.noise_checkbox.setFixedHeight(item_height)
         self.noise_checkbox.setToolTip("Adds noise to maintain stimulation during silent parts.")
         self.noise_checkbox.stateChanged.connect(self.noiseCheckboxChanged)
 
         self.compressor_checkbox = QCheckBox("Dynamic Volume")
-        self.compressor_checkbox.setFixedHeight(self.ITEM_HEIGHT)
+        self.compressor_checkbox.setFixedHeight(item_height)
         self.compressor_checkbox.setToolTip("Makes quiet sounds louder.")
         self.compressor_checkbox.stateChanged.connect(self.compressorCheckboxChanged)
 
         frequency_input_wrapper = QWidget()
-        frequency_input_wrapper.setFixedHeight(self.ITEM_HEIGHT)
+        frequency_input_wrapper.setFixedHeight(item_height)
         frequency_input_wrapper.setObjectName("frequency_wrapper")
         frequency_tooltip = "Adjusts the frequency of the stimulation."
         self.frequency_input = QDoubleSpinBox()
@@ -513,7 +513,7 @@ class CustomSettingsDialog(QDialog):
         frequency_label.setToolTip(frequency_tooltip)
 
         self.save_as_60_min_checkbox = QCheckBox("Merge into ~1-hour files")
-        self.save_as_60_min_checkbox.setFixedHeight(self.ITEM_HEIGHT)
+        self.save_as_60_min_checkbox.setFixedHeight(item_height)
         self.save_as_60_min_checkbox.setToolTip("Tries to merge input files into 1 hour long output files.")
         self.save_as_60_min_checkbox.stateChanged.connect(self.saveAs60MinCheckboxChanged)
 

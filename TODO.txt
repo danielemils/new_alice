@@ -1,4 +1,19 @@
-INSTEAD OF CREATING TEMP FILES FOR SOX ISSUE, MAYBE JUST TEMPORARILY RENAME INPUT FILES??
+
+
+time remaining ekki nogu nakvaemt
+
+normalize input file volume before adding noise and stuff
+
+finish fixing DC offset
+
+
+
+
+
+
+
+
+
 
 
 X? fix windows app icon

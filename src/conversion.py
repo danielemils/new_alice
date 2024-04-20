@@ -8,6 +8,14 @@ import shutil
 import tempfile
 import platform
 from mutagen.mp3 import MP3
+import re
+
+class AliceStoppingException(Exception):
+    def __init__(self, message):
+        self.message = message
+
+    def __str__(self):
+        return f"AliceStoppingException: {self.message}"
 
 class ConversionWorker(QObject):
     finished = pyqtSignal()
@@ -65,7 +73,7 @@ class ConversionWorker(QObject):
 
         for index, input_file in enumerate(self.input_files):
             if self.stopped:
-                return
+                break
 
             self.estimateRemainingTime(index)
             curr_file_duration = self.file_durations[index]
@@ -168,7 +176,8 @@ class ConversionWorker(QObject):
                         else:
                             self.mergeFiles()
 
-
+            except AliceStoppingException as e:
+                pass
             except Exception as e:
                 print(f"Exception in convertFiles, deleting temp files: {type(e)} ({e})")
 
@@ -346,7 +355,7 @@ class ConversionWorker(QObject):
                     self.updateTimeRemaining(0.1)
                 # check if user wants to cancel before proceeding further
                 if self.stopped:
-                    return
+                    raise AliceStoppingException()
                 
                 self.copyFileAndFixMetadata(merged_path, self.merged_out_path) # copy temp output file to destination file
 
@@ -357,36 +366,84 @@ class ConversionWorker(QObject):
 
         self.delTempChunkFiles()
 
+    def createTempNoiseFile(self, in_file, extension):
+        try:
+            noise_fd, noise_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
+            os.close(noise_fd) # Close the file descriptor as we won't be using it
+
+            self.current_task_updated.emit("Generating noise...")
+
+            noise_command = ['sox-14-4-2/sox',in_file,noise_path,'synth','brownnoise','vol','0.05']
+            self.process = subprocess.Popen(noise_command, startupinfo=self.startupinfo)
+            while not self.stopped and self.process.poll() is None:  # Check if the process is still running
+                time.sleep(0.1)
+                self.updateTimeRemaining(0.1)
+            # check if user wants to cancel before proceeding further
+            if self.stopped:
+                raise AliceStoppingException()
+        except subprocess.CalledProcessError as e:
+            print(f"Error encountered: {e}")
+        finally:
+            self.delTempFile(noise_path)
+
+    # Check if file has DC Offset and fix it (bad quality files like Wuthering Heights chapter 1)
+    def checkAndFixDCOffset(self, in_file):
+        # try:
+        stats_command = ['sox-14-4-2/sox',in_file, '-n', 'stat']
+        self.process = subprocess.Popen(stats_command, stderr=subprocess.PIPE, text=True, startupinfo=self.startupinfo)
+        while not self.stopped and self.process.poll() is None:  # Check if the process is still running
+            time.sleep(0.1)
+            self.updateTimeRemaining(0.1)
+        if self.stopped:
+            raise AliceStoppingException()
+        dc_offset = 0
+        try:
+            for std_err_line in self.process.stderr.readlines():
+                if isinstance(std_err_line, str) and std_err_line.startswith("Mean") and "amplitude" in std_err_line:
+                    dc_offset = float(std_err_line.strip().split(":")[-1].strip())
+        except Exception as e:
+            print(f"Error encountered: checkAndFixDCOffset :: reading/castng mean amplitude stat :: {e}")
+
+        if round(dc_offset, 2) != 0: # Check if dc offset is so large that we need to fix it
+            print(f"Found significant DC Offset of {dc_offset}, fixing...")
+
+        ## TODO
+        #     noise_fd, noise_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
+        #     os.close(noise_fd) # Close the file descriptor as we won't be using it
+
+        #     self.current_task_updated.emit("Generating noise...")
+
+        #     noise_command = ['sox-14-4-2/sox',in_file,noise_path, 'synth', 'brownnoise', 'vol', '0.05']
+        #     self.process = subprocess.Popen(noise_command, startupinfo=self.startupinfo)
+        #     while not self.stopped and self.process.poll() is None:  # Check if the process is still running
+        #         time.sleep(0.1)
+        #         self.updateTimeRemaining(0.1)
+        #     # check if user wants to cancel before proceeding further
+        #     if self.stopped:
+        #         raise AliceStoppingException()
+        # except subprocess.CalledProcessError as e:
+        #     print(f"Error encountered: {e}")
+        # finally:
+        #     self.delTempFile(noise_path)
+
     @pyqtSlot()
     def applyTremolo(self, in_file, out_file, extension, split=False):
         noise_path = None
         self.time_started_last_file = time.time()
         try:
-            # noise
+            self.checkAndFixDCOffset(in_file)
+
             if (self.settings.noise):
-                noise_fd, noise_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
-                os.close(noise_fd) # Close the file descriptor as we won't be using it
-
-                self.current_task_updated.emit("Generating noise...")
-
-                noise_command = ['sox-14-4-2/sox',in_file,noise_path,'synth','brownnoise','vol','0.05']
-                self.process = subprocess.Popen(noise_command, startupinfo=self.startupinfo)
-                while not self.stopped and self.process.poll() is None:  # Check if the process is still running
-                    time.sleep(0.1)
-                    self.updateTimeRemaining(0.1)
-                # check if user wants to cancel before proceeding further
-                if self.stopped:
-                    return
+                noise_path = self.createTempNoiseFile(in_file, extension)
 
             self.current_task_updated.emit("Applying effects...")
 
             # puzzle together command based on settings
-            sox_command = ['sox-14-4-2/sox', '-S']
+            sox_command = ['sox-14-4-2/sox', '-S', '--norm']
             if self.settings.noise:
                 sox_command.append('-m')
-            sox_command.extend(['-v', '0.95', in_file])
-            if self.settings.noise:
                 sox_command.append(noise_path)
+            sox_command.extend(['-v', '0.95', in_file])
             sox_command.extend([
                 '-c', '2',
                 out_file
@@ -449,7 +506,7 @@ class ConversionWorker(QObject):
         if self.process is not None:
             self.process.terminate()
             self.process.wait()
-            self.proces = None
+            self.process = None
 
     def generateDestinationPath(self, filename):
         destination_path = os.path.join(self.settings.output_folder, f"{filename}(Converted).mp3")
