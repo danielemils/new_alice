@@ -215,7 +215,8 @@ class ConversionWorker(QObject):
             for md_key in mutagen_data:
                 if hasattr(mutagen_data[md_key], 'encoding') and hasattr(mutagen_data[md_key], 'text'):
                     mutagen_data[md_key].encoding = 3
-                    mutagen_data[md_key].text = [text.encode('latin1').decode('utf-8') for text in mutagen_data[md_key].text]
+                    # for some reason doing encode/decode twice results in correct encoding
+                    mutagen_data[md_key].text = [text.encode('latin1').decode().encode('latin1').decode() for text in mutagen_data[md_key].text]
             mutagen_data.save()
         self.copyFile(src, dst)
 
