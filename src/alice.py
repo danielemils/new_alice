@@ -621,7 +621,7 @@ if __name__ == '__main__':
             app.setStyleSheet(_style)
     except:
         try:
-            with open("src/old_style.qss", "r") as f:
+            with open("src/style.qss", "r") as f:
                 _style = f.read()
                 app.setStyleSheet(_style)
         except:
