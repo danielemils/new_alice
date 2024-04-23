@@ -11,7 +11,7 @@ from mutagen.mp3 import MP3
 import re
 
 class AliceStoppingException(Exception):
-    def __init__(self, message):
+    def __init__(self, message=None):
         self.message = message
 
     def __str__(self):
@@ -180,13 +180,13 @@ class ConversionWorker(QObject):
                             self.mergeFiles()
 
             except AliceStoppingException as e:
-                pass
+                self.delTempFile(out_tmp_file_path)
             except Exception as e:
                 print(f"Exception in convertFiles, deleting temp files: {type(e)} ({e})")
 
-            self.delTempFile(in_tmp_file_path) # IMPORTANT
+            self.delTempFile(in_tmp_file_path)
             if not self.settings.save_as_60_min_chunks:
-                self.delTempFile(out_tmp_file_path) # IMPORTANT
+                self.delTempFile(out_tmp_file_path)
             
             if len(self.split_files) > 0:
                 self.delTempSplitFiles()
@@ -307,7 +307,9 @@ class ConversionWorker(QObject):
 
     def initEstimatedTimes(self):
         for file_dur in self.file_durations:
-            self.estimated_times.append(self.estimation_base_multi * file_dur)
+            # time taken seems to be 2x normal estimate for 10h file
+            # so assume it linearly increases by 2x per 10h
+            self.estimated_times.append(self.estimation_base_multi * file_dur * (1.0 + (float(file_dur) / 36000.0)))
 
     @pyqtSlot()
     def estimateRemainingTime(self, idx):
@@ -359,6 +361,7 @@ class ConversionWorker(QObject):
                     self.updateTimeRemaining(0.1)
                 # check if user wants to cancel before proceeding further
                 if self.stopped:
+                    self.delTempFile(merged_path)
                     raise AliceStoppingException()
                 
                 self.copyFileAndFixMetadata(merged_path, self.merged_out_path) # copy temp output file to destination file
@@ -383,6 +386,7 @@ class ConversionWorker(QObject):
             self.updateTimeRemaining(0.1)
         # check if user wants to cancel before proceeding further
         if self.stopped:
+            self.delTempFile(noise_path)
             raise AliceStoppingException()
         
         return noise_path
@@ -424,6 +428,7 @@ class ConversionWorker(QObject):
                 self.updateTimeRemaining(-0.1) # add to time est cus this wasnt included in estimate
             # check if user wants to cancel before proceeding further
             if self.stopped:
+                self.delTempFile(fixed_dc_path)
                 raise AliceStoppingException()
             
             return fixed_dc_path, vol_multi
@@ -432,6 +437,7 @@ class ConversionWorker(QObject):
 
     @pyqtSlot()
     def applyTremolo(self, in_file, out_file, extension, split=False):
+        fixed_dc_path = None
         noise_path = None
         self.time_started_last_file = time.time()
         try:
@@ -497,8 +503,10 @@ class ConversionWorker(QObject):
         except Exception as e:
             print(f"Error encountered: {e}")
         finally:
-            self.delTempFile(noise_path)
-            self.delTempFile(fixed_dc_path)
+            if noise_path is not None:
+                self.delTempFile(noise_path)
+            if fixed_dc_path is not None:
+                self.delTempFile(fixed_dc_path)
         
         self.time_finished_last_file = time.time()
         
