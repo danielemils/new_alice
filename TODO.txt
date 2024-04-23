@@ -1,5 +1,5 @@
 O still very rare case of clipping
-O metadata still wrong encoding (on 10hr file atleast)
+X? metadata still wrong encoding (on 10hr file atleast)
 O time remaining not accurate enough
 
 X? normalize input file volume before adding noise and stuff

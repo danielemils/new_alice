@@ -485,7 +485,7 @@ class CustomSettingsDialog(QDialog):
 
         self.noise_checkbox = QCheckBox("Noise")
         self.noise_checkbox.setFixedHeight(item_height)
-        self.noise_checkbox.setToolTip("Adds noise to maintain stimulation during silent parts.")
+        self.noise_checkbox.setToolTip("Adds noise to maintain stimulation\nduring silent parts.")
         self.noise_checkbox.stateChanged.connect(self.noiseCheckboxChanged)
 
         self.compressor_checkbox = QCheckBox("Dynamic Volume")
@@ -512,9 +512,9 @@ class CustomSettingsDialog(QDialog):
         frequency_label.setObjectName("frequency_label")
         frequency_label.setToolTip(frequency_tooltip)
 
-        self.save_as_60_min_checkbox = QCheckBox("Merge into ~1-hour files")
+        self.save_as_60_min_checkbox = QCheckBox("1 Hour Audio")
         self.save_as_60_min_checkbox.setFixedHeight(item_height)
-        self.save_as_60_min_checkbox.setToolTip("Tries to merge input files into 1 hour long output files.")
+        self.save_as_60_min_checkbox.setToolTip("Tries to merge or split input files\ninto 1 hour long output files.")
         self.save_as_60_min_checkbox.stateChanged.connect(self.saveAs60MinCheckboxChanged)
 
         self.cancel_button = QPushButton("Cancel")
