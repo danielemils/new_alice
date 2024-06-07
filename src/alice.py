@@ -23,6 +23,8 @@ import datetime
 from alice_settings import AliceSettings
 from conversion import ConversionWorker
 
+import atexit
+
 # CONFIG_FILE = "alice_config.json"
 # cfg_input_folder_key = "input_folder"
 # cfg_output_folder_key = "output_folder"
@@ -30,18 +32,6 @@ from conversion import ConversionWorker
 
 WINDOW_WIDTH = 390
 WINDOW_HEIGHT = 460
-
-
-# important for temp file creation while converting
-if platform.system() == "Windows":
-    dir = "C:/Temp"
-    tempfile.tempdir = dir
-else:
-    # untested
-    dir = "/tmp"
-    tempfile.tempdir = dir
-os.makedirs(dir, exist_ok=True)
-# ------------
     
 
 class MainWindow(QWidget):
@@ -610,6 +600,9 @@ class WorkerThread(QThread):
         super().quit()
 
 
+def delete_temp_dir(path):
+    pass
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
@@ -626,5 +619,28 @@ if __name__ == '__main__':
                 app.setStyleSheet(_style)
         except:
             pass
+
+    # important for temp file creation while converting
+    # if platform.system() == "Windows":
+    #     dir = "C:/Temp"
+    #     tempfile.tempdir = dir
+    # else:
+    #     # untested
+    #     dir = "/tmp"
+    #     tempfile.tempdir = dir
+    # os.makedirs(dir, exist_ok=True)
+    
+    # Get the directory of the current script or executable
+    exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    # Create a subdirectory for temporary files within the executable directory
+    temp_dir = os.path.join(exe_dir, "alice_temp")
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+    tempfile.tempdir = temp_dir
+
+
+    # ------------
+
+    print(sys.argv[0])
 
     sys.exit(app.exec_())

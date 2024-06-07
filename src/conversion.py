@@ -10,6 +10,8 @@ import platform
 from mutagen.mp3 import MP3
 import re
 
+import traceback
+
 class AliceStoppingException(Exception):
     def __init__(self, message=None):
         self.message = message
@@ -183,6 +185,8 @@ class ConversionWorker(QObject):
                 self.delTempFile(out_tmp_file_path)
             except Exception as e:
                 print(f"Exception in convertFiles, deleting temp files: {type(e)} ({e})")
+                traceback.print_exc()
+                self.stopConverting()
 
             self.delTempFile(in_tmp_file_path)
             if not self.settings.save_as_60_min_chunks:
@@ -211,13 +215,23 @@ class ConversionWorker(QObject):
     
     def copyFileAndFixMetadata(self, src, dst):
         if src.endswith(".mp3"):
-            mutagen_data = MP3(src)
-            for md_key in mutagen_data:
-                if hasattr(mutagen_data[md_key], 'encoding') and hasattr(mutagen_data[md_key], 'text'):
-                    mutagen_data[md_key].encoding = 3
-                    # for some reason doing encode/decode twice results in correct encoding
-                    mutagen_data[md_key].text = [text.encode('latin1').decode().encode('latin1').decode() for text in mutagen_data[md_key].text]
-            mutagen_data.save()
+            try:
+                mutagen_data = MP3(src)
+                for md_key in mutagen_data:
+                    if hasattr(mutagen_data[md_key], 'encoding') and hasattr(mutagen_data[md_key], 'text'):
+                        mutagen_data[md_key].encoding = 3
+                        # for some reason doing encode/decode twice results in correct encoding with noise enabled
+                        if self.settings.noise:
+                            try:
+                                mutagen_data[md_key].text = [text.encode('latin-1').decode('utf-8').encode('latin-1').decode('utf-8') for text in mutagen_data[md_key].text]        
+                            except:
+                                mutagen_data[md_key].text = [text.encode('latin-1').decode('utf-8') for text in mutagen_data[md_key].text]
+                        else: 
+                            mutagen_data[md_key].text = [text.encode('latin-1').decode('utf-8') for text in mutagen_data[md_key].text]
+
+                mutagen_data.save()
+            except Exception as e:
+                print(f"Error in copyFileAndFixMetadata: {type(e)} ({e})")
         self.copyFile(src, dst)
 
     def getTempFile(self, extension):
@@ -368,6 +382,7 @@ class ConversionWorker(QObject):
 
             except Exception as e:
                 print(f"Error encountered: {e}")
+                self.stopConverting()
             finally:
                 self.delTempFile(merged_path)
 
@@ -394,7 +409,7 @@ class ConversionWorker(QObject):
     # Check if file has DC Offset and fix it (bad quality files like Wuthering Heights chapter 1)
     def fixDCOffsetAndGetVolumeMulti(self, in_file, extension):
         stats_command = ['sox-14-4-2/sox',in_file, '-n', 'stat']
-        self.process = subprocess.Popen(stats_command, stderr=subprocess.PIPE, text=True, startupinfo=self.startupinfo)
+        self.process = subprocess.Popen(stats_command, stderr=subprocess.PIPE, text=True, encoding='utf-8', startupinfo=self.startupinfo)
         while not self.stopped and self.process.poll() is None:  # Check if the process is still running
             time.sleep(0.1)
             self.updateTimeRemaining(0.1)
@@ -442,7 +457,6 @@ class ConversionWorker(QObject):
         self.time_started_last_file = time.time()
         try:
             fixed_dc_path, vol_multi = self.fixDCOffsetAndGetVolumeMulti(in_file, extension)
-            print(vol_multi)
             if fixed_dc_path != None:
                 in_file = fixed_dc_path
 
@@ -478,7 +492,7 @@ class ConversionWorker(QObject):
             fake_progress_started_time = None
             fake_progress = 0
 
-            self.process = subprocess.Popen(sox_command, stderr=subprocess.PIPE, text=True, startupinfo=self.startupinfo)
+            self.process = subprocess.Popen(sox_command, stderr=subprocess.PIPE, text=True, encoding='utf-8', startupinfo=self.startupinfo)
             while not self.stopped and self.process.poll() is None:  # Check if the process is still running
                 start_time = time.time()
 
@@ -502,6 +516,8 @@ class ConversionWorker(QObject):
 
         except Exception as e:
             print(f"Error encountered: {e}")
+            traceback.print_exc()
+            self.stopConverting()
         finally:
             if noise_path is not None:
                 self.delTempFile(noise_path)
