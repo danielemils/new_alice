@@ -601,7 +601,8 @@ class WorkerThread(QThread):
 
 
 def delete_temp_dir(path):
-    pass
+    if os.path.isdir(path):
+        shutil.rmtree(path)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
@@ -630,17 +631,14 @@ if __name__ == '__main__':
     #     tempfile.tempdir = dir
     # os.makedirs(dir, exist_ok=True)
     
-    # Get the directory of the current script or executable
-    exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
     # Create a subdirectory for temporary files within the executable directory
-    temp_dir = os.path.join(exe_dir, "alice_temp")
+    temp_dir = os.path.join(".", "alice_temp")
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     tempfile.tempdir = temp_dir
 
-
+    # delete temp dir on exit
+    atexit.register(delete_temp_dir, temp_dir)
     # ------------
-
-    print(sys.argv[0])
 
     sys.exit(app.exec_())

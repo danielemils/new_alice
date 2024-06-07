@@ -241,7 +241,7 @@ class ConversionWorker(QObject):
             temp_file_fd, temp_file_path = tempfile.mkstemp(suffix=extension)
             # Close the file descriptor as we won't be using it
             os.close(temp_file_fd)
-            return temp_file_path
+            return os.path.join(tempfile.tempdir, os.path.basename(temp_file_path))
         except Exception as e:
             print(f"Failed getTempFile: {type(e)} ({e})")
         return None
@@ -389,8 +389,7 @@ class ConversionWorker(QObject):
         self.delTempChunkFiles()
 
     def createTempNoiseFile(self, in_file, extension):
-        noise_fd, noise_path = tempfile.mkstemp(suffix=extension) # Create a temporary file to store the output
-        os.close(noise_fd) # Close the file descriptor as we won't be using it
+        noise_path = self.getTempFile(extension)
 
         self.current_task_updated.emit("Generating noise...")
 
